@@ -1,0 +1,36 @@
+CREATE TABLE Locationtype(Locationn varchar(50), Locationd int);
+INSERT INTO Locationtype VALUES('Location', 0);
+INSERT INTO Locationtype VALUES('Location', 1);
+INSERT INTO Locationtype VALUES('Location', 2);
+CREATE TABLE Competitortype(Competitorn varchar(50), Competitord int);
+INSERT INTO Competitortype VALUES('Competitor', 0);
+INSERT INTO Competitortype VALUES('Competitor', 1);
+INSERT INTO Competitortype VALUES('Competitor', 2);
+CREATE TABLE Competitiontype(Competitionn varchar(50),Competitiond int);
+INSERT INTO Competitiontype VALUES ('Competition', 0);
+CREATE VIEW QCompetition AS (SELECT Competition.Location, Competition.Competitor, CONCAT('(', Competitionn, ',', Competitiond, ')') AS lineage, Competitiond AS deg, 1 AS agg FROM Competition, Competitiontype);
+CREATE VIEW QCompetitor AS (SELECT Location,  CONCAT('(', QCompetition.lineage, ',', Competitorn, ',', Competitord, ')') AS lineage, QCompetition.deg + Competitord AS deg, SUM(POWER(QCompetition.Competitor,Competitord) * QCompetition.agg) AS agg FROM QCompetition, Competitortype WHERE QCompetition.deg + Competitord <= 2 GROUP BY Location, CONCAT('(', QCompetition.lineage, ',', Competitorn, ',', Competitord, ')'), QCompetition.deg + Competitord);
+CREATE TABLE Producttype(Productn varchar(50), Productd int);
+INSERT INTO Producttype VALUES('Product', 0);
+INSERT INTO Producttype VALUES('Product', 1);
+INSERT INTO Producttype VALUES('Product', 2);
+CREATE TABLE Saletype(Salen varchar(50), Saled int);
+INSERT INTO Saletype VALUES('Sale', 0);
+INSERT INTO Saletype VALUES('Sale', 1);
+INSERT INTO Saletype VALUES('Sale', 2);
+CREATE TABLE Salestype(Salesn varchar(50),Salesd int);
+INSERT INTO Salestype VALUES ('Sales', 0);
+CREATE VIEW QSales AS (SELECT Sales.Product, Sales.Sale, CONCAT('(', Salesn, ',', Salesd, ')') AS lineage, Salesd AS deg, 1 AS agg FROM Sales, Salestype);
+CREATE VIEW QSale AS (SELECT Product,  CONCAT('(', QSales.lineage, ',', Salen, ',', Saled, ')') AS lineage, QSales.deg + Saled AS deg, SUM(POWER(QSales.Sale,Saled) * QSales.agg) AS agg FROM QSales, Saletype WHERE QSales.deg + Saled <= 2 GROUP BY Product, CONCAT('(', QSales.lineage, ',', Salen, ',', Saled, ')'), QSales.deg + Saled);
+CREATE TABLE Inventorytype(Inventoryn varchar(50), Inventoryd int);
+INSERT INTO Inventorytype VALUES('Inventory', 0);
+INSERT INTO Inventorytype VALUES('Inventory', 1);
+INSERT INTO Inventorytype VALUES('Inventory', 2);
+CREATE TABLE Branchtype(Branchn varchar(50),Branchd int);
+INSERT INTO Branchtype VALUES ('Branch', 0);
+CREATE VIEW QBranch AS (SELECT Branch.Location, Branch.Product, Branch.Inventory, CONCAT('(', Branchn, ',', Branchd, ')') AS lineage, Branchd AS deg, 1 AS agg FROM Branch, Branchtype);
+CREATE VIEW QInventory AS (SELECT Location, Product,  CONCAT('(', QBranch.lineage, ',', Inventoryn, ',', Inventoryd, ')') AS lineage, QBranch.deg + Inventoryd AS deg, SUM(POWER(QBranch.Inventory,Inventoryd) * QBranch.agg) AS agg FROM QBranch, Inventorytype WHERE QBranch.deg + Inventoryd <= 2 GROUP BY Location, Product, CONCAT('(', QBranch.lineage, ',', Inventoryn, ',', Inventoryd, ')'), QBranch.deg + Inventoryd);
+CREATE VIEW QProduct AS (SELECT Location,  CONCAT('(', QSale.lineage, ',', QInventory.lineage, ',', Productn, ',', Productd, ')') AS lineage, QSale.deg + QInventory.deg + Productd AS deg, SUM(POWER(QSale.Product,Productd) * QSale.agg * QInventory.agg) AS agg FROM QSale JOIN QInventory ON QSale.Product=QInventory.Product, Producttype WHERE QSale.deg + QInventory.deg + Productd <= 2 GROUP BY Location, CONCAT('(', QSale.lineage, ',', QInventory.lineage, ',', Productn, ',', Productd, ')'), QSale.deg + QInventory.deg + Productd);
+CREATE VIEW QLocation AS (SELECT  CONCAT('(', QCompetitor.lineage, ',', QProduct.lineage, ',', Locationn, ',', Locationd, ')') AS lineage, QCompetitor.deg + QProduct.deg + Locationd AS deg, SUM(POWER(QCompetitor.Location,Locationd) * QCompetitor.agg * QProduct.agg) AS agg FROM QCompetitor JOIN QProduct ON QCompetitor.Location=QProduct.Location, Locationtype WHERE QCompetitor.deg + QProduct.deg + Locationd <= 2 GROUP BY CONCAT('(', QCompetitor.lineage, ',', QProduct.lineage, ',', Locationn, ',', Locationd, ')'), QCompetitor.deg + QProduct.deg + Locationd);
+
+

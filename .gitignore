@@ -1,0 +1,8 @@
+*
+!/**/
+!*.*
+!makefile
+*.o
+**/err.log
+**/err.txt
+**/output.txt
