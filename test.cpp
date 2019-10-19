@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include <string>
 #include <iostream>
+#include <pqxx/pqxx>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -45,10 +46,33 @@ ExtendedVariableOrder testCreate2() {
 }
 
 void recursiveTest(const ExtendedVariableOrder& root) {
-  std::cerr << root.getName() << ' ' << root.isLeaf() << '\n';
+  std::cout << root.getName() << ' ' << root.isLeaf() << '\n';
   for (const ExtendedVariableOrder& x : root.getChildren()) {
     recursiveTest(x);
   }
+}
+
+void dropAll(pqxx::connection& c) {
+  pqxx::work w{c};
+  // w.exec("DROP TABLE IF EXISTS Locationtype CASCADE;");
+  w.exec("\
+    DROP TABLE IF EXISTS Branchtype CASCADE;\
+    DROP TABLE IF EXISTS Competitiontype CASCADE;\
+    DROP TABLE IF EXISTS Competitortype CASCADE;\
+    DROP TABLE IF EXISTS Inventorytype CASCADE;\
+    DROP TABLE IF EXISTS Locationtype CASCADE;\
+    DROP TABLE IF EXISTS Producttype CASCADE;\
+    DROP TABLE IF EXISTS Salestype CASCADE;\
+    DROP TABLE IF EXISTS Saletype CASCADE;\
+    DROP VIEW IF EXISTS QBranch CASCADE;\
+    DROP VIEW IF EXISTS QCompetition CASCADE;\
+    DROP VIEW IF EXISTS QCompetitor CASCADE;\
+    DROP VIEW IF EXISTS QInventory CASCADE;\
+    DROP VIEW IF EXISTS QLocation CASCADE;\
+    DROP VIEW IF EXISTS QProduct CASCADE;\
+    DROP VIEW IF EXISTS QSale CASCADE;\
+    DROP VIEW IF EXISTS QSales CASCADE;");
+  w.commit();
 }
 
 int main() {
@@ -62,10 +86,33 @@ int main() {
 
   ExtendedVariableOrder testV2{testCreate2()};
   recursiveTest(testV2);
-  std::cerr << '\n';
-
-  std::cout << factorizeSQL(testV2) << '\n';
   std::cout << '\n';
+
+  // std::cout << factorizeSQL(testV2) << '\n';
+  // std::cout << '\n';
+
+  try {
+    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    if (c.is_open()) {
+      std::cout << "Connected to: " << c.dbname() << '\n';
+
+      dropAll(c);
+      std::cout << "Dropped all tables and views.\n";
+      // std::cin.ignore();
+
+      pqxx::work transaction{c};
+      transaction.exec(factorizeSQL(testV2));
+      transaction.commit();
+      std::cout << "Creation of tables and views complete.\n";
+
+      c.disconnect();
+    } else {
+      std::cout << "Failed to connect!\n";
+    }
+
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
 
   return 0;
 }
