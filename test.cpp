@@ -54,7 +54,6 @@ void recursiveTest(const ExtendedVariableOrder& root) {
 
 void dropAll(pqxx::connection& c) {
   pqxx::work w{c};
-  // w.exec("DROP TABLE IF EXISTS Locationtype CASCADE;");
   w.exec("\
     DROP TABLE IF EXISTS Branchtype CASCADE;\
     DROP TABLE IF EXISTS Competitiontype CASCADE;\
@@ -101,7 +100,7 @@ int main() {
       // std::cin.ignore();
 
       pqxx::work transaction{c};
-      transaction.exec(factorizeSQL(testV2));
+      factorizeSQL(testV2, transaction);
       transaction.commit();
       std::cout << "Creation of tables and views complete.\n";
 

@@ -5,16 +5,17 @@
 #include "variableOrder.h"
 #include "regression.h"
 
+typedef std::string sql;
+
 /**
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Figure 5)
  * URL: https://doi.org/10.14778/3007263.3007312
  **/
-sql factorizeSQL(const ExtendedVariableOrder& varOrder) {
-  sql ret{""};
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction) {
   const sql& name{varOrder.getName()};
   if (varOrder.isLeaf()) {
-    ret = "CREATE TABLE " + name + "type(" + name + "n varchar(50)," + name + "d int);\nINSERT INTO " + name +
-          "type VALUES ('" + name + "', 0);\n";
+    transaction.exec("CREATE TABLE " + name + "type(" + name + "n varchar(50)," + name +
+                     "d int);\nINSERT INTO " + name + "type VALUES ('" + name + "', 0);\n");
 
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50)," << name
                << "d int);\nINSERT INTO " << name << "type VALUES ('" << name << "', 0);\n"; */
@@ -27,17 +28,17 @@ sql factorizeSQL(const ExtendedVariableOrder& varOrder) {
       schema += name + "." + x + ", ";
     }
 
-    ret += "CREATE VIEW Q" + name + " AS (SELECT " + schema + lineage + ", " + deg + ", " + agg + " FROM " +
-           name + ", " + name + "type);\n";
+    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + schema + lineage + ", " + deg + ", " + agg +
+                     " FROM " + name + ", " + name + "type);\n");
 
   } else {
-    ret = "CREATE TABLE " + name + "type(" + name + "n varchar(50), " + name + "d int);\n";
+    transaction.exec("CREATE TABLE " + name + "type(" + name + "n varchar(50), " + name + "d int);\n");
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50), " << name
                      << "d int);\n"; */
 
     int d = 1; // linear
     for (int i{0}; i <= 2 * d; ++i) {
-      ret += "INSERT INTO " + name + "type VALUES('" + name + "', " + std::to_string(i) + ");\n";
+      transaction.exec("INSERT INTO " + name + "type VALUES('" + name + "', " + std::to_string(i) + ");\n");
     }
 
     // std::vector<sql> retChild;
@@ -52,7 +53,7 @@ sql factorizeSQL(const ExtendedVariableOrder& varOrder) {
       // retChild.push_back(factorizeSQL(x, id));
       // join += factorizeSQL(x, id, createTablesFile) + ", ";
       // ret += factorizeSQL(x, createTablesFile);
-      ret += factorizeSQL(x);
+      factorizeSQL(x, transaction);
 
       const sql xName{x.getName()};
       if (lastName != "") {
@@ -82,12 +83,10 @@ sql factorizeSQL(const ExtendedVariableOrder& varOrder) {
       key += x + ", ";
     }
 
-    ret += "CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS lineage, " + deg +
-           " AS deg, " + agg + " AS agg FROM " + join + name + "type WHERE " + deg +
-           " <= " + std::to_string(2 * d) + " GROUP BY " + key + lineage + ", " + deg + ");\n";
+    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS lineage, " + deg +
+                     " AS deg, " + agg + " AS agg FROM " + join + name + "type WHERE " + deg +
+                     " <= " + std::to_string(2 * d) + " GROUP BY " + key + lineage + ", " + deg + ");\n");
   }
-
-  return ret;
 }
 
 /* sql factorizeSQL(const ExtendedVariableOrder& varOrder) {

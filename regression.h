@@ -1,10 +1,12 @@
 #ifndef REGRESSION_H
 #define REGRESSION_H
 
+#include <pqxx/pqxx>
 #include "variableOrder.h"
 
-typedef std::string sql;
+// typedef std::string sql;
 
-sql factorizeSQL(const ExtendedVariableOrder& varOrder);
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
+// sql factorizeSQL(const ExtendedVariableOrder& varOrder);
 
 #endif
