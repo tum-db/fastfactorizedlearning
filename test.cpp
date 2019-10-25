@@ -21,6 +21,7 @@ ExtendedVariableOrder testCreate() {
 }
 
 ExtendedVariableOrder testCreate2() {
+  ExtendedVariableOrder t{"T"};
   ExtendedVariableOrder l{"Location"};
   ExtendedVariableOrder c{"Competitor", {l.getName()}};
   ExtendedVariableOrder p{"Product", {l.getName()}};
@@ -41,8 +42,9 @@ ExtendedVariableOrder testCreate2() {
   p.addChild(i);
   l.addChild(c);
   l.addChild(p);
+  t.addChild(l);
 
-  return l;
+  return t;
 }
 
 void recursiveTest(const ExtendedVariableOrder& root) {
@@ -70,7 +72,8 @@ void dropAll(pqxx::connection& c) {
     DROP VIEW IF EXISTS QLocation CASCADE;\
     DROP VIEW IF EXISTS QProduct CASCADE;\
     DROP VIEW IF EXISTS QSale CASCADE;\
-    DROP VIEW IF EXISTS QSales CASCADE;");
+    DROP VIEW IF EXISTS QSales CASCADE;\
+    DROP VIEW IF EXISTS QT CASCADE;");
   w.commit();
 }
 
@@ -99,9 +102,7 @@ int main() {
       std::cout << "Dropped all tables and views.\n";
       // std::cin.ignore();
 
-      pqxx::work transaction{c};
-      factorizeSQL(testV2, transaction);
-      transaction.commit();
+      factorizeSQL(testV2, c);
       std::cout << "Creation of tables and views complete.\n";
 
       c.disconnect();

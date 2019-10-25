@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include <string>
 #include <iostream>
+#include <cassert>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -36,7 +37,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50), " << name
                      << "d int);\n"; */
 
-    int d = 1; // linear
+    const int d = 1; // linear
     for (int i{0}; i <= 2 * d; ++i) {
       transaction.exec("INSERT INTO " + name + "type VALUES('" + name + "', " + std::to_string(i) + ");\n");
     }
@@ -87,6 +88,47 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
                      " AS deg, " + agg + " AS agg FROM " + join + name + "type WHERE " + deg +
                      " <= " + std::to_string(2 * d) + " GROUP BY " + key + lineage + ", " + deg + ");\n");
   }
+}
+
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
+  pqxx::work transaction{c};
+  // special case for root/intercept to avoid redundancy and allow simpler varOrders
+  const sql& name{varOrder.getName()};
+  const int d = 1; // linear
+
+  assert(!varOrder.isLeaf());
+
+  // process all children (usually just one)
+  sql join{""}, lineage{"CONCAT('(', "}, deg{""}, agg{"SUM("};
+  bool first{true};
+  for (const ExtendedVariableOrder& x : varOrder.getChildren()) {
+    factorizeSQL(x, transaction);
+
+    const sql& xName{x.getName()};
+    if (first) {
+      first = false;
+      join += "Q" + xName;
+      deg += "Q" + xName + ".deg";
+      lineage += "Q" + xName + ".lineage";
+      agg += "Q" + xName + ".agg";
+
+    } else {
+      join += ", Q" + xName;
+      deg += " + Q" + xName + ".deg";
+      lineage += ", ',', Q" + xName + ".lineage";
+      agg += " * Q" + xName + ".agg";
+    }
+  }
+
+  lineage += ", ')')";
+  agg += ")";
+
+  // combine the results
+  transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + lineage + " AS lineage, " + deg + " AS deg, " +
+                   agg + " AS agg FROM " + join + " WHERE " + deg + " <= " + std::to_string(2 * d) +
+                   " GROUP BY " + lineage + ", " + deg + ");\n");
+
+  transaction.commit();
 }
 
 /* sql factorizeSQL(const ExtendedVariableOrder& varOrder) {

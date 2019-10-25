@@ -6,7 +6,8 @@
 
 // typedef std::string sql;
 
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c);
+// void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
 // sql factorizeSQL(const ExtendedVariableOrder& varOrder);
 
 #endif
