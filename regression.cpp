@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <cassert>
+#include <cmath>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -129,6 +130,111 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
                    " GROUP BY " + lineage + ", " + deg + ");\n");
 
   transaction.commit();
+}
+
+void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                std::vector<std::vector<int>>& cofactorMatrix) {
+  assert(relevantColumns.size() > 1);
+  const size_t nrElems{relevantColumns.size()};
+  for (auto& x : cofactorMatrix) {
+    x.reserve(nrElems);
+  }
+
+  pqxx::nontransaction n{c};
+  for (size_t i{0}; i < nrElems; ++i) {
+    // diagonal element
+    const std::string& iName{relevantColumns.at(i)};
+    auto res{n.exec("SELECT agg FROM QT WHERE lineage LIKE '%" + iName + ",2%';")};
+    assert(res.size() == 1);
+    assert(res[0].size() == 1);
+    cofactorMatrix.at(i).push_back(res[0][0].as<int>());
+
+    for (size_t j{i + 1}; j < nrElems; ++j) {
+      // i,j and j,i
+      res = n.exec("SELECT agg FROM QT WHERE lineage LIKE '%" + iName + ",1%' AND lineage LIKE '%" +
+                   relevantColumns.at(j) + ",1%';");
+      // std::cerr << i << ", " << j << "\n";
+      assert(res.size() == 1);
+      assert(res[0].size() == 1);
+      cofactorMatrix.at(i).push_back(res[0][0].as<int>());
+      cofactorMatrix.at(j).push_back(res[0][0].as<int>());
+    }
+    assert(cofactorMatrix.size() == cofactorMatrix.at(i).size());
+  }
+}
+
+std::string stringOfVector(const std::vector<int>& array) {
+  std::string out{"[ "};
+
+  for (const int elem : array) {
+    out += std::to_string(elem) + " | ";
+  }
+
+  // remove trailing " | "
+  if (out.size() > 2) {
+    out.erase(out.size() - 3, 3);
+  }
+
+  out += "]";
+  return out;
+}
+
+/**
+ * assumes label being at index 0 of relevantColumns
+ *
+ * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Chapter 4)
+ * URL: https://doi.org/10.14778/3007263.3007312
+ **/
+std::vector<double> batchGradientDescent(const std::vector<std::string>& relevantColumns,
+                                         pqxx::connection& c) {
+  std::vector<std::vector<int>> cofactorMatrix(relevantColumns.size(), std::vector<int>{});
+  fillMatrix(relevantColumns, c, cofactorMatrix);
+
+  for (const auto& x : cofactorMatrix) {
+    std::cout << stringOfVector(x) << '\n';
+  }
+
+  const size_t n{relevantColumns.size()};
+
+  // start with some initial value
+  std::vector<double> theta(n, 1);
+  // label is fixed with -1
+  theta.at(0) = -1.;
+
+  // TODO: find good values
+  double alpha{0.3};
+  const double lambda{0.3};
+
+  // repeat until error is sufficiently small
+  const double eps{0.00001};
+  bool notExact{true};
+  while (notExact) {
+    notExact = false;
+
+    // TODO: adjust alpha during the loop
+
+    // compute new epsilon for all features
+    std::vector<double> epsilon(n, 0.);
+    for (size_t j{1}; j < n; ++j) {
+      for (size_t k{0}; k < n; ++k) {
+        epsilon.at(j) += theta.at(k) * cofactorMatrix.at(k).at(j);
+      }
+
+      // using ridge regularization term derived by theta_j
+      epsilon.at(j) += lambda * 2 * theta.at(j);
+
+      epsilon.at(j) *= alpha;
+      if (std::fabs(epsilon.at(j)) > eps) {
+        notExact = true;
+      }
+    }
+
+    for (size_t j{1}; j < n; ++j) {
+      theta.at(j) -= epsilon.at(j);
+    }
+  }
+
+  return theta;
 }
 
 /* sql factorizeSQL(const ExtendedVariableOrder& varOrder) {

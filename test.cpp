@@ -77,6 +77,40 @@ void dropAll(pqxx::connection& c) {
   w.commit();
 }
 
+void varOrderToList(const ExtendedVariableOrder& root, std::vector<std::string>& relevantColumns) {
+  if (root.isLeaf()) {
+    return;
+  }
+  relevantColumns.push_back(root.getName());
+  for (const auto& x : root.getChildren()) {
+    varOrderToList(x, relevantColumns);
+  }
+}
+
+std::vector<std::string> varOrderToList(const ExtendedVariableOrder& root) {
+  std::vector<std::string> res;
+  for (const auto& x : root.getChildren()) {
+    varOrderToList(x, res);
+  }
+  return res;
+}
+
+std::string stringOfVector(const std::vector<double>& array) {
+  std::string out{"[ "};
+
+  for (const int elem : array) {
+    out += std::to_string(elem) + " | ";
+  }
+
+  // remove trailing " | "
+  if (out.size() > 2) {
+    out.erase(out.size() - 3, 3);
+  }
+
+  out += "]";
+  return out;
+}
+
 int main() {
   // std::cout << std::boolalpha;
   // ExtendedVariableOrder testV{testCreate()};
@@ -103,7 +137,14 @@ int main() {
       // std::cin.ignore();
 
       factorizeSQL(testV2, c);
-      std::cout << "Creation of tables and views complete.\n";
+      std::cout << "Creation of tables and views complete.\n\n";
+
+      std::vector<std::string> relevantColumns{varOrderToList(testV2)};
+
+      std::vector<double> theta = batchGradientDescent(relevantColumns, c);
+      std::cout << "Batch Gradient descent complete\n";
+
+      std::cout << stringOfVector(theta) << '\n';
 
       c.disconnect();
     } else {

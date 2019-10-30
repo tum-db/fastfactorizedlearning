@@ -10,4 +10,6 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c);
 // void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
 // sql factorizeSQL(const ExtendedVariableOrder& varOrder);
 
+std::vector<double> batchGradientDescent(const std::vector<std::string>& varOrder, pqxx::connection& c);
+
 #endif
