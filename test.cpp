@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <pqxx/pqxx>
+#include <cassert>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -98,7 +99,7 @@ std::vector<std::string> varOrderToList(const ExtendedVariableOrder& root) {
 std::string stringOfVector(const std::vector<double>& array) {
   std::string out{"[ "};
 
-  for (const int elem : array) {
+  for (const double elem : array) {
     out += std::to_string(elem) + " | ";
   }
 
@@ -109,6 +110,15 @@ std::string stringOfVector(const std::vector<double>& array) {
 
   out += "]";
   return out;
+}
+
+double testResult(const std::vector<double>& theta, const std::vector<int>& x) {
+  assert(x.size() + 1 == theta.size());
+  double res{0.};
+  for (size_t i{0}; i < x.size(); ++i) {
+    res += theta.at(i + 1) * x.at(i);
+  }
+  return res;
 }
 
 int main() {
@@ -139,12 +149,19 @@ int main() {
       factorizeSQL(testV2, c);
       std::cout << "Creation of tables and views complete.\n\n";
 
-      std::vector<std::string> relevantColumns{varOrderToList(testV2)};
+      // std::vector<std::string> relevantColumns{varOrderToList(testV2)};
+      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale"};
 
       std::vector<double> theta = batchGradientDescent(relevantColumns, c);
       std::cout << "Batch Gradient descent complete\n";
-
       std::cout << stringOfVector(theta) << '\n';
+
+      for (int i{0}; i < 5; ++i) {
+        for (int j{0}; j < 5; ++j) {
+          std::vector<int> x{i, j};
+          std::cout << i << " + 2*" << j << " = " << testResult(theta, x) << '\n';
+        }
+      }
 
       c.disconnect();
     } else {

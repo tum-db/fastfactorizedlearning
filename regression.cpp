@@ -202,31 +202,44 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   theta.at(0) = -1.;
 
   // TODO: find good values
-  double alpha{0.3};
-  const double lambda{0.3};
+  double alpha{0.003};
+  const double lambda{0.003};
 
   // repeat until error is sufficiently small
-  const double eps{0.00001};
+  const double eps{1e-10};
   bool notExact{true};
+
+  std::vector<double> epsilon(n, INFINITY);
   while (notExact) {
     notExact = false;
 
-    // TODO: adjust alpha during the loop
-
     // compute new epsilon for all features
-    std::vector<double> epsilon(n, 0.);
     for (size_t j{1}; j < n; ++j) {
+      double epsilonNew{0.};
       for (size_t k{0}; k < n; ++k) {
-        epsilon.at(j) += theta.at(k) * cofactorMatrix.at(k).at(j);
+        epsilonNew += theta.at(k) * cofactorMatrix.at(k).at(j);
       }
 
       // using ridge regularization term derived by theta_j
-      epsilon.at(j) += lambda * 2 * theta.at(j);
+      epsilonNew += lambda * 2 * theta.at(j);
 
-      epsilon.at(j) *= alpha;
-      if (std::fabs(epsilon.at(j)) > eps) {
+      epsilonNew *= alpha;
+
+      // not exact enough
+      if (std::fabs(epsilonNew) > eps) {
         notExact = true;
+
+        // alpha needs adjusting
+        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e6) {
+          // alpha = std::min(alpha / 3, std::fabs(epsilon.at(j) / epsilonNew));
+          alpha /= 3;
+          epsilonNew /= 3;
+        }
       }
+
+      // epsilonNew *= alpha;
+
+      epsilon.at(j) = epsilonNew;
     }
 
     for (size_t j{1}; j < n; ++j) {
