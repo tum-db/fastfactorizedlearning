@@ -21,11 +21,11 @@ ExtendedVariableOrder testCreate() {
   return root;
 }
 
-ExtendedVariableOrder testCreate2() {
+ExtendedVariableOrder createSales() {
   ExtendedVariableOrder t{"T"};
   ExtendedVariableOrder l{"Location"};
   ExtendedVariableOrder c{"Competitor", {l.getName()}};
-  ExtendedVariableOrder p{"Product", {l.getName()}};
+  ExtendedVariableOrder p{"Product", {l.getName()}, true};
   ExtendedVariableOrder i{"Inventory", {l.getName(), p.getName()}};
   ExtendedVariableOrder s{"Sale", {p.getName()}};
   ExtendedVariableOrder b{"Branch", {l.getName(), p.getName(), i.getName()}};
@@ -48,10 +48,10 @@ ExtendedVariableOrder testCreate2() {
   return t;
 }
 
-void recursiveTest(const ExtendedVariableOrder& root) {
+void printVarOrder(const ExtendedVariableOrder& root) {
   std::cout << root.getName() << ' ' << root.isLeaf() << '\n';
   for (const ExtendedVariableOrder& x : root.getChildren()) {
-    recursiveTest(x);
+    printVarOrder(x);
   }
 }
 
@@ -121,20 +121,12 @@ double testResult(const std::vector<double>& theta, const std::vector<int>& x) {
   return res;
 }
 
-int main() {
-  // std::cout << std::boolalpha;
-  // ExtendedVariableOrder testV{testCreate()};
-  // recursiveTest(testV);
-  // std::cerr << '\n';
-
-  // std::cout << factorizeSQL(testV) << '\n';
-  // std::cout << '\n';
-
-  ExtendedVariableOrder testV2{testCreate2()};
-  recursiveTest(testV2);
+void testSales() {
+  ExtendedVariableOrder varOrder{createSales()};
+  printVarOrder(varOrder);
   std::cout << '\n';
 
-  // std::cout << factorizeSQL(testV2) << '\n';
+  // std::cout << factorizeSQL(varOrder) << '\n';
   // std::cout << '\n';
 
   try {
@@ -146,10 +138,10 @@ int main() {
       std::cout << "Dropped all tables and views.\n";
       // std::cin.ignore();
 
-      factorizeSQL(testV2, c);
+      factorizeSQL(varOrder, c);
       std::cout << "Creation of tables and views complete.\n\n";
 
-      // std::vector<std::string> relevantColumns{varOrderToList(testV2)};
+      // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
       std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale"};
 
       std::vector<double> theta = batchGradientDescent(relevantColumns, c);
@@ -171,6 +163,18 @@ int main() {
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
   }
+}
+
+int main() {
+  // std::cout << std::boolalpha;
+  // ExtendedVariableOrder testV{testCreate()};
+  // printVarOrder(testV);
+  // std::cerr << '\n';
+
+  // std::cout << factorizeSQL(testV) << '\n';
+  // std::cout << '\n';
+
+  testSales();
 
   return 0;
 }

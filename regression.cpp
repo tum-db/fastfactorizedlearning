@@ -45,12 +45,19 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 
     // std::vector<sql> retChild;
     // retChild.reserve(varOrder.getChildren().size());
-    sql join{""}, lineage{"CONCAT('(', "}, deg{""},
-        agg{"SUM(POWER(Q" + varOrder.getChildren().front().getName() + "." + name + "," + name + "d)"};
+    sql join{""}, lineage{"CONCAT('(', "}, deg{""}, agg;
+
+    // categorical variables have to be treated differently => grouping instead of POWER
+    if (varOrder.isCategorical()) {
+      agg = "SUM(1";
+    } else {
+      agg = "SUM(POWER(Q" + varOrder.getChildren().front().getName() + "." + name + "," + name + "d)";
+    }
 
     // ++id;
 
     sql lastName{""};
+    // construct queries for all children and prepare statements for this node's query
     for (const ExtendedVariableOrder& x : varOrder.getChildren()) {
       // retChild.push_back(factorizeSQL(x, id));
       // join += factorizeSQL(x, id, createTablesFile) + ", ";
@@ -81,6 +88,10 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     agg += ")";
 
     sql key{""};
+    // categorical variables have to be treated differently => grouping instead of POWER
+    if (varOrder.isCategorical()) {
+      key = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
+    }
     for (const sql& x : varOrder.getKey()) {
       key += x + ", ";
     }
