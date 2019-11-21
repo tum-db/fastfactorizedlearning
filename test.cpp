@@ -48,6 +48,79 @@ ExtendedVariableOrder createSales() {
   return t;
 }
 
+ExtendedVariableOrder createFavorita() {
+  ExtendedVariableOrder t{"t"};
+
+  ExtendedVariableOrder items{"items", {"item_nbr", "family", "class", "perishable"}};
+  ExtendedVariableOrder family{"family", {"item_nbr", "class", "perishable"}, true};
+  ExtendedVariableOrder clas{"class", {"item_nbr", "perishable"}};
+  ExtendedVariableOrder perishable{"perishable", {"item_nbr"}};
+  ExtendedVariableOrder item_nbr{"item_nbr", {"date", "store_nbr"}};
+
+  ExtendedVariableOrder holidays_events{
+      "holidays_events_conv", {"date", "type", "locale", "locale_name", "description", "transferred"}};
+  ExtendedVariableOrder type{"type", {"date", "locale", "locale_name", "description", "transferred"}, true};
+  ExtendedVariableOrder locale{"locale", {"date", "locale_name", "description", "transferred"}, true};
+  ExtendedVariableOrder locale_name{"locale_name", {"date", "description", "transferred"}, true};
+  ExtendedVariableOrder description{"description", {"date", "transferred"}, true};
+  ExtendedVariableOrder transferred{"transferred", {"date"}, true};
+  ExtendedVariableOrder date{"date", {"store_nbr"}};
+
+  ExtendedVariableOrder oil{"oil_conv", {"date", "dcoilwtico"}};
+  ExtendedVariableOrder dcoilwtico{"dcoilwtico", {"date"}};
+
+  ExtendedVariableOrder transactions{"transactions_conv", {"date", "store_nbr", "txns"}};
+  ExtendedVariableOrder txns{"txns", {"date", "store_nbr"}};
+  ExtendedVariableOrder store_nbr{"store_nbr"};
+
+  ExtendedVariableOrder stores{"stores", {"store_nbr", "city", "state", "stype", "cluster"}};
+  ExtendedVariableOrder city{"city", {"store_nbr", "state", "stype", "cluster"}, true};
+  ExtendedVariableOrder state{"state", {"store_nbr", "stype", "cluster"}, true};
+  ExtendedVariableOrder stype{"stype", {"store_nbr", "cluster"}, true};
+  ExtendedVariableOrder cluster{"cluster", {"store_nbr"}};
+
+  ExtendedVariableOrder train{"train_conv",
+                              {"id", "date", "store_nbr", "item_nbr", "unit_sales", "onpromotion"}};
+  ExtendedVariableOrder onpromotion{"onpromotion", {"id", "date", "store_nbr", "item_nbr", "unit_sales"}};
+  ExtendedVariableOrder unit_sales{"unit_sales", {"id", "date", "store_nbr", "item_nbr"}};
+  ExtendedVariableOrder id{"id", {"date", "store_nbr", "item_nbr"}};
+
+  city.addChild(stores);
+  state.addChild(city);
+  stype.addChild(state);
+  cluster.addChild(stype);
+  store_nbr.addChild(cluster);
+
+  txns.addChild(transactions);
+  date.addChild(txns);
+
+  dcoilwtico.addChild(oil);
+  date.addChild(dcoilwtico);
+
+  onpromotion.addChild(train);
+  unit_sales.addChild(onpromotion);
+  id.addChild(unit_sales);
+  item_nbr.addChild(id);
+
+  family.addChild(items);
+  clas.addChild(family);
+  perishable.addChild(clas);
+  item_nbr.addChild(perishable);
+  date.addChild(item_nbr);
+
+  type.addChild(holidays_events);
+  locale.addChild(type);
+  locale_name.addChild(locale);
+  description.addChild(locale_name);
+  transferred.addChild(description);
+  date.addChild(transferred);
+  store_nbr.addChild(date);
+
+  t.addChild(store_nbr);
+
+  return t;
+}
+
 void printVarOrder(const ExtendedVariableOrder& root) {
   std::cout << root.getName() << ' ' << root.isLeaf() << '\n';
   for (const ExtendedVariableOrder& x : root.getChildren()) {
@@ -55,26 +128,19 @@ void printVarOrder(const ExtendedVariableOrder& root) {
   }
 }
 
-void dropAll(pqxx::connection& c) {
+void dropAll(pqxx::work& w, const ExtendedVariableOrder& root) {
+  w.exec("DROP TABLE IF EXISTS " + root.getName() + "_type CASCADE;");
+  w.exec("DROP VIEW IF EXISTS Q" + root.getName() + " CASCADE;");
+  for (const auto& x : root.getChildren()) {
+    dropAll(w, x);
+  }
+}
+
+void dropAll(pqxx::connection& c, const ExtendedVariableOrder& root) {
   pqxx::work w{c};
-  w.exec("\
-    DROP TABLE IF EXISTS Branchtype CASCADE;\
-    DROP TABLE IF EXISTS Competitiontype CASCADE;\
-    DROP TABLE IF EXISTS Competitortype CASCADE;\
-    DROP TABLE IF EXISTS Inventorytype CASCADE;\
-    DROP TABLE IF EXISTS Locationtype CASCADE;\
-    DROP TABLE IF EXISTS Producttype CASCADE;\
-    DROP TABLE IF EXISTS Salestype CASCADE;\
-    DROP TABLE IF EXISTS Saletype CASCADE;\
-    DROP VIEW IF EXISTS QBranch CASCADE;\
-    DROP VIEW IF EXISTS QCompetition CASCADE;\
-    DROP VIEW IF EXISTS QCompetitor CASCADE;\
-    DROP VIEW IF EXISTS QInventory CASCADE;\
-    DROP VIEW IF EXISTS QLocation CASCADE;\
-    DROP VIEW IF EXISTS QProduct CASCADE;\
-    DROP VIEW IF EXISTS QSale CASCADE;\
-    DROP VIEW IF EXISTS QSales CASCADE;\
-    DROP VIEW IF EXISTS QT CASCADE;");
+  for (const auto& x : root.getChildren()) {
+    dropAll(w, x);
+  }
   w.commit();
 }
 
@@ -134,7 +200,7 @@ void testSales() {
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 
-      dropAll(c);
+      dropAll(c, varOrder);
       std::cout << "Dropped all tables and views.\n";
       // std::cin.ignore();
 
@@ -165,16 +231,58 @@ void testSales() {
   }
 }
 
-int main() {
-  // std::cout << std::boolalpha;
-  // ExtendedVariableOrder testV{testCreate()};
-  // printVarOrder(testV);
-  // std::cerr << '\n';
+void testFavorita() {
+  ExtendedVariableOrder varOrder{createFavorita()};
+  printVarOrder(varOrder);
+  std::cout << '\n';
 
-  // std::cout << factorizeSQL(testV) << '\n';
+  // std::cout << factorizeSQL(varOrder) << '\n';
   // std::cout << '\n';
 
+  try {
+    pqxx::connection c{"dbname=Favorita hostaddr=127.0.0.1 port=5433"};
+    if (c.is_open()) {
+      std::cout << "Connected to: " << c.dbname() << '\n';
+
+      dropAll(c, varOrder);
+      std::cout << "Dropped all tables and views.\n";
+      // std::cin.ignore();
+
+      factorizeSQL(varOrder, c);
+      std::cout << "Creation of tables and views complete.\n\n";
+
+      // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
+      std::vector<std::string> relevantColumns{"unit_sales", "id",       "date",
+                                               "store_nbr",  "item_nbr", "onpromotion"};
+
+      std::vector<double> theta = batchGradientDescent(relevantColumns, c);
+      std::cout << "Batch Gradient descent complete\n";
+      std::cout << stringOfVector(theta) << '\n';
+
+      // for (int i{0}; i < 5; ++i) {
+      //   for (int j{0}; j < 5; ++j) {
+      //     std::vector<int> x{i, j};
+      //     std::cout << i << " + 2*" << j << " = " << testResult(theta, x) << '\n';
+      //   }
+      // }
+
+      c.disconnect();
+    } else {
+      std::cout << "Failed to connect!\n";
+    }
+
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
+}
+
+int main() {
+  // std::cout << std::boolalpha;
+
   testSales();
+
+  std::cout << "\n\n";
+  testFavorita();
 
   return 0;
 }

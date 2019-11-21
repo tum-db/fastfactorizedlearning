@@ -16,14 +16,15 @@ typedef std::string sql;
 void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction) {
   const sql& name{varOrder.getName()};
   if (varOrder.isLeaf()) {
-    transaction.exec("CREATE TABLE " + name + "type(" + name + "n varchar(50)," + name +
-                     "d int);\nINSERT INTO " + name + "type VALUES ('" + name + "', 0);\n");
+    transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50)," + name +
+                     "_d int);\nINSERT INTO " + name + "_type VALUES ('" + name + "', 0);\n");
 
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50)," << name
                << "d int);\nINSERT INTO " << name << "type VALUES ('" << name << "', 0);\n"; */
 
-    sql deg = name + "d AS deg", lineage = "CONCAT('(', " + name + "n, ',', " + name + "d, ')') AS lineage",
-        agg = "1 AS agg";
+    sql deg     = name + "_d AS " + name + "_deg",
+        lineage = "CONCAT('(', " + name + "_n, ',', " + name + "_d, ')') AS " + name + "_lineage",
+        agg     = "1 AS " + name + "_agg";
 
     sql schema{""};
     for (const sql& x : varOrder.getKey()) {
@@ -31,16 +32,16 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     }
 
     transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + schema + lineage + ", " + deg + ", " + agg +
-                     " FROM " + name + ", " + name + "type);\n");
+                     " FROM " + name + ", " + name + "_type);\n");
 
   } else {
-    transaction.exec("CREATE TABLE " + name + "type(" + name + "n varchar(50), " + name + "d int);\n");
+    transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50), " + name + "_d int);\n");
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50), " << name
                      << "d int);\n"; */
 
     const int d = 1; // linear
     for (int i{0}; i <= 2 * d; ++i) {
-      transaction.exec("INSERT INTO " + name + "type VALUES('" + name + "', " + std::to_string(i) + ");\n");
+      transaction.exec("INSERT INTO " + name + "_type VALUES('" + name + "', " + std::to_string(i) + ");\n");
     }
 
     // std::vector<sql> retChild;
@@ -51,7 +52,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     if (varOrder.isCategorical()) {
       agg = "SUM(1";
     } else {
-      agg = "SUM(POWER(Q" + varOrder.getChildren().front().getName() + "." + name + "," + name + "d)";
+      agg = "SUM(POWER(Q" + varOrder.getChildren().front().getName() + "." + name + "," + name + "_d)";
     }
 
     // ++id;
@@ -66,16 +67,16 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 
       const sql xName{x.getName()};
       if (lastName != "") {
-        join += " JOIN ";
+        join += " NATURAL JOIN ";
       }
       join += "Q" + xName;
-      if (lastName != "") {
-        join += " ON Q" + lastName + "." + name + "=Q" + xName + "." + name;
-      }
+      // if (lastName != "") {
+      //   join += " ON Q" + lastName + "." + name + "=Q" + xName + "." + name;
+      // }
 
-      deg += "Q" + xName + ".deg + ";
-      lineage += "Q" + xName + ".lineage, ',', ";
-      agg += " * Q" + xName + ".agg";
+      deg += "Q" + xName + "." + xName + "_deg + ";
+      lineage += "Q" + xName + "." + xName + "_lineage, ',', ";
+      agg += " * Q" + xName + "." + xName + "_agg";
 
       lastName = xName;
     }
@@ -83,22 +84,25 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
       join += ", ";
     }
 
-    deg += name + "d";
-    lineage += name + "n, ',', " + name + "d, ')')";
+    deg += name + "_d";
+    lineage += name + "_n, ',', " + name + "_d, ')')";
     agg += ")";
 
     sql key{""};
-    // categorical variables have to be treated differently => grouping instead of POWER
-    if (varOrder.isCategorical()) {
-      key = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
-    }
     for (const sql& x : varOrder.getKey()) {
       key += x + ", ";
     }
 
-    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS lineage, " + deg +
-                     " AS deg, " + agg + " AS agg FROM " + join + name + "type WHERE " + deg +
-                     " <= " + std::to_string(2 * d) + " GROUP BY " + key + lineage + ", " + deg + ");\n");
+    // categorical variables have to be treated differently => grouping instead of POWER
+    sql cat{""};
+    if (varOrder.isCategorical()) {
+      cat = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
+    }
+
+    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
+                     "_lineage, " + deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " +
+                     join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " + cat +
+                     key + lineage + ", " + deg + ");\n");
   }
 }
 
@@ -120,15 +124,15 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
     if (first) {
       first = false;
       join += "Q" + xName;
-      deg += "Q" + xName + ".deg";
-      lineage += "Q" + xName + ".lineage";
-      agg += "Q" + xName + ".agg";
+      deg += "Q" + xName + "." + xName + "_deg";
+      lineage += "Q" + xName + "." + xName + "_lineage";
+      agg += "Q" + xName + "." + xName + "_agg";
 
     } else {
       join += ", Q" + xName;
-      deg += " + Q" + xName + ".deg";
-      lineage += ", ',', Q" + xName + ".lineage";
-      agg += " * Q" + xName + ".agg";
+      deg += " + Q" + xName + "." + xName + "_deg";
+      lineage += ", ',', Q" + xName + "." + xName + "_lineage";
+      agg += " * Q" + xName + "." + xName + "_agg";
     }
   }
 
@@ -169,6 +173,8 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
       assert(res[0].size() == 1);
       cofactorMatrix.at(i).push_back(res[0][0].as<int>());
       cofactorMatrix.at(j).push_back(res[0][0].as<int>());
+
+      std::cout << "Filled:" << i << ", " << j << '\n';
     }
     assert(cofactorMatrix.size() == cofactorMatrix.at(i).size());
   }
@@ -221,7 +227,10 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   bool notExact{true};
 
   std::vector<double> epsilon(n, INFINITY);
+  int i{0};
   while (notExact) {
+    if (++i % 100 == 0)
+      std::cout << i << '\n';
     notExact = false;
 
     // compute new epsilon for all features
