@@ -101,8 +101,8 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 
     transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
                      "_lineage, " + deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " +
-                     join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " + cat +
-                     key + lineage + ", " + deg + ");\n");
+                     join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " +
+                     cat + key + lineage + ", " + deg + ");\n");
   }
 }
 
@@ -148,7 +148,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
 }
 
 void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connection& c,
-                std::vector<std::vector<int>>& cofactorMatrix) {
+                std::vector<std::vector<long>>& cofactorMatrix) {
   assert(relevantColumns.size() > 1);
   const size_t nrElems{relevantColumns.size()};
   for (auto& x : cofactorMatrix) {
@@ -162,7 +162,7 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
     auto res{n.exec("SELECT agg FROM QT WHERE lineage LIKE '%" + iName + ",2%';")};
     assert(res.size() == 1);
     assert(res[0].size() == 1);
-    cofactorMatrix.at(i).push_back(res[0][0].as<int>());
+    cofactorMatrix.at(i).push_back(res[0][0].as<long>());
 
     for (size_t j{i + 1}; j < nrElems; ++j) {
       // i,j and j,i
@@ -171,19 +171,19 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
       // std::cerr << i << ", " << j << "\n";
       assert(res.size() == 1);
       assert(res[0].size() == 1);
-      cofactorMatrix.at(i).push_back(res[0][0].as<int>());
-      cofactorMatrix.at(j).push_back(res[0][0].as<int>());
+      cofactorMatrix.at(i).push_back(res[0][0].as<long>());
+      cofactorMatrix.at(j).push_back(res[0][0].as<long>());
 
-      std::cout << "Filled:" << i << ", " << j << '\n';
+      // std::cout << "Filled:" << i << ", " << j << '\n';
     }
     assert(cofactorMatrix.size() == cofactorMatrix.at(i).size());
   }
 }
 
-std::string stringOfVector(const std::vector<int>& array) {
+std::string stringOfVector(const std::vector<long>& array) {
   std::string out{"[ "};
 
-  for (const int elem : array) {
+  for (const long elem : array) {
     out += std::to_string(elem) + " | ";
   }
 
@@ -204,33 +204,39 @@ std::string stringOfVector(const std::vector<int>& array) {
  **/
 std::vector<double> batchGradientDescent(const std::vector<std::string>& relevantColumns,
                                          pqxx::connection& c) {
-  std::vector<std::vector<int>> cofactorMatrix(relevantColumns.size(), std::vector<int>{});
+  std::vector<std::vector<long>> cofactorMatrix(relevantColumns.size(), std::vector<long>{});
   fillMatrix(relevantColumns, c, cofactorMatrix);
 
-  for (const auto& x : cofactorMatrix) {
-    std::cout << stringOfVector(x) << '\n';
-  }
+  // for (const auto& x : cofactorMatrix) {
+  //   std::cout << stringOfVector(x) << '\n';
+  // }
 
   const size_t n{relevantColumns.size()};
 
   // start with some initial value
-  std::vector<double> theta(n, 1);
+  std::vector<double> theta(n, 1.);
+  // std::vector<double> theta(n, 190.6);
   // label is fixed with -1
   theta.at(0) = -1.;
+  // theta.at(2) = 45.8;
 
   // TODO: find good values
   double alpha{0.003};
   const double lambda{0.003};
 
   // repeat until error is sufficiently small
-  const double eps{1e-10};
+  const double eps{1e-6};
   bool notExact{true};
 
   std::vector<double> epsilon(n, INFINITY);
   int i{0};
   while (notExact) {
-    if (++i % 100 == 0)
-      std::cout << i << '\n';
+    if (++i > 100000000) {
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      break;
+      // } else if (i % 1000000 == 0) {
+      //   std::cout << i << '\n';
+    }
     notExact = false;
 
     // compute new epsilon for all features
@@ -254,6 +260,9 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
           // alpha = std::min(alpha / 3, std::fabs(epsilon.at(j) / epsilonNew));
           alpha /= 3;
           epsilonNew /= 3;
+          if (alpha < 1e-10) {
+            break;
+          }
         }
       }
 
@@ -262,10 +271,17 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       epsilon.at(j) = epsilonNew;
     }
 
+    if (alpha < 1e-10) {
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      break;
+    }
+
     for (size_t j{1}; j < n; ++j) {
       theta.at(j) -= epsilon.at(j);
     }
   }
+
+  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << '\n';
 
   return theta;
 }

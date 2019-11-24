@@ -4,6 +4,7 @@
 #include <iostream>
 #include <pqxx/pqxx>
 #include <cassert>
+#include <random>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -214,12 +215,12 @@ void testSales() {
       std::cout << "Batch Gradient descent complete\n";
       std::cout << stringOfVector(theta) << '\n';
 
-      for (int i{0}; i < 5; ++i) {
-        for (int j{0}; j < 5; ++j) {
-          std::vector<int> x{i, j};
-          std::cout << i << " + 2*" << j << " = " << testResult(theta, x) << '\n';
-        }
-      }
+      // for (int i{0}; i < 5; ++i) {
+      //   for (int j{0}; j < 5; ++j) {
+      //     std::vector<int> x{i, j};
+      //     std::cout << i << " + 2*" << j << " = " << testResult(theta, x) << '\n';
+      //   }
+      // }
 
       c.disconnect();
     } else {
@@ -228,6 +229,161 @@ void testSales() {
 
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
+  }
+}
+
+std::vector<double> testSales(pqxx::connection& c) {
+  ExtendedVariableOrder varOrder{createSales()};
+  // printVarOrder(varOrder);
+  // std::cout << '\n';
+
+  // std::cout << factorizeSQL(varOrder) << '\n';
+  // std::cout << '\n';
+
+  dropAll(c, varOrder);
+  // std::cout << "Dropped all tables and views.\n";
+  // std::cin.ignore();
+
+  factorizeSQL(varOrder, c);
+  // std::cout << "Creation of tables and views complete.\n\n";
+
+  // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
+  std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale"};
+
+  std::vector<double> theta = batchGradientDescent(relevantColumns, c);
+  // std::cout << "Batch Gradient descent complete\n";
+  // std::cout << stringOfVector(theta) << '\n';
+
+  return theta;
+}
+
+std::vector<double> createRandomSales(pqxx::connection& c) {
+  pqxx::work w{c};
+  // DROP
+  w.exec("DROP TABLE IF EXISTS Sales CASCADE;\
+   DROP TABLE IF EXISTS Branch CASCADE;\
+   DROP TABLE IF EXISTS Competition CASCADE;");
+
+  // and recreate
+  w.exec(
+      "CREATE TABLE Competition(Location integer NOT NULL, Competitor integer NOT NULL) TABLESPACE thesis;");
+  w.exec("CREATE TABLE Branch(Location integer NOT NULL, Product varchar(30) NOT NULL, Inventory integer NOT "
+         "NULL) TABLESPACE thesis;");
+  w.exec("CREATE TABLE Sales(Product varchar(30) NOT NULL, Sale integer NOT NULL) TABLESPACE thesis;");
+
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<> dis(2, 10);
+
+  // Competition Values
+  std::string query = "INSERT INTO Competition VALUES";
+
+  size_t numberCompetitors{static_cast<size_t>(dis(gen))};
+  std::vector<int> competitor;
+  competitor.reserve(numberCompetitors);
+
+  for (size_t i{0}; i < numberCompetitors; ++i) {
+    int x{dis(gen) * dis(gen) + dis(gen)};
+    competitor.push_back(x);
+
+    query += "(" + std::to_string(i) + "," + std::to_string(x) + ")";
+
+    if (i < numberCompetitors - 1) {
+      query += ", ";
+    } else {
+      query += ";";
+    }
+  }
+
+  w.exec(query);
+  // END Competition
+
+  // Sales VALUES
+  query = "INSERT INTO Sales VALUES";
+
+  size_t numberSales{static_cast<size_t>(dis(gen))};
+  std::vector<int> sale;
+  sale.reserve(numberSales);
+
+  for (size_t i{0}; i < numberSales; ++i) {
+    int x{dis(gen) * dis(gen) + dis(gen)};
+    sale.push_back(x);
+
+    query += "('randomProduct" + std::to_string(i) + "'," + std::to_string(x) + ")";
+
+    if (i < numberSales - 1) {
+      query += ", ";
+    } else {
+      query += ";";
+    }
+  }
+
+  w.exec(query);
+  // END Sales
+
+  // generate random factors
+  std::uniform_real_distribution<> realDis(0.1, 20000.);
+  std::vector<double> theta{realDis(gen), realDis(gen)};
+
+  // Branch VALUES
+  query = "INSERT INTO Branch VALUES";
+
+  for (size_t i{0}; i < numberCompetitors; ++i) {
+    for (size_t j{0}; j < numberSales; ++j) {
+      double res{theta.front() * competitor.at(i) + theta.back() * sale.at(j)};
+      query +=
+          "(" + std::to_string(i) + ",'randomProduct" + std::to_string(j) + "'," + std::to_string(res) + ")";
+
+      if (i < numberCompetitors - 1 || j < numberSales - 1) {
+        query += ", ";
+      } else {
+        query += ";";
+      }
+    }
+  }
+
+  w.exec(query);
+  // END Branch
+
+  w.commit();
+
+  return theta;
+}
+
+void testRandom() {
+  try {
+    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    if (c.is_open()) {
+      std::cout << "Connected to: " << c.dbname() << '\n';
+
+      for (int testCase{0}; testCase < 10000; ++testCase) {
+        std::vector<double> realTheta = createRandomSales(c);
+        // std::cout << stringOfVector(realTheta) << '\n';
+        std::vector<double> theta = testSales(c);
+        // std::cout << stringOfVector(theta) << '\n';
+
+        assert(theta.size() == realTheta.size() + 1);
+        for (size_t i{0}; i < realTheta.size(); ++i) {
+          if (std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) > 0.05) {
+            std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
+            std::cout << "Relative error: " << (theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i) << '\n';
+            std::cout << stringOfVector(theta) << '\n';
+            std::cout << stringOfVector(realTheta) << '\n';
+            c.disconnect();
+            return;
+          }
+        }
+      }
+
+      std::cout << "All tests passed!\n";
+      c.disconnect();
+    } else {
+      std::cout << "Failed to connect!\n";
+    }
+
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+    exit(1);
   }
 }
 
@@ -281,8 +437,10 @@ int main() {
 
   testSales();
 
-  std::cout << "\n\n";
-  testFavorita();
+  // std::cout << "\n\n";
+  // testFavorita();
+
+  // testRandom();
 
   return 0;
 }
