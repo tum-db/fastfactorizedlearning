@@ -148,36 +148,54 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
 }
 
 void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connection& c,
-                std::vector<std::vector<long>>& cofactorMatrix) {
+                std::vector<std::vector<double>>& cofactorMatrix) {
   assert(relevantColumns.size() > 1);
-  const size_t nrElems{relevantColumns.size()};
+  const size_t nrElems{relevantColumns.size() - 1};
   for (auto& x : cofactorMatrix) {
-    x.reserve(nrElems);
+    x.reserve(nrElems + 1);
   }
+
+  const std::string& intercept{relevantColumns.back()};
 
   pqxx::nontransaction n{c};
   for (size_t i{0}; i < nrElems; ++i) {
     // diagonal element
     const std::string& iName{relevantColumns.at(i)};
-    auto res{n.exec("SELECT agg FROM QT WHERE lineage LIKE '%" + iName + ",2%';")};
+    auto res{n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName + ",2%';")};
     assert(res.size() == 1);
     assert(res[0].size() == 1);
-    cofactorMatrix.at(i).push_back(res[0][0].as<long>());
+    cofactorMatrix.at(i).push_back(res[0][0].as<double>());
 
     for (size_t j{i + 1}; j < nrElems; ++j) {
       // i,j and j,i
-      res = n.exec("SELECT agg FROM QT WHERE lineage LIKE '%" + iName + ",1%' AND lineage LIKE '%" +
-                   relevantColumns.at(j) + ",1%';");
+      res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName +
+                   ",1%' AND lineage LIKE '%," + relevantColumns.at(j) + ",1%';");
       // std::cerr << i << ", " << j << "\n";
       assert(res.size() == 1);
       assert(res[0].size() == 1);
-      cofactorMatrix.at(i).push_back(res[0][0].as<long>());
-      cofactorMatrix.at(j).push_back(res[0][0].as<long>());
+      cofactorMatrix.at(i).push_back(res[0][0].as<double>());
+      cofactorMatrix.at(j).push_back(res[0][0].as<double>());
 
       // std::cout << "Filled:" << i << ", " << j << '\n';
     }
+
+    // intercept
+    // i,n and n,i
+    res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName + ",1%' AND deg = 1;");
+    assert(res.size() == 1);
+    assert(res[0].size() == 1);
+    cofactorMatrix.at(i).push_back(res[0][0].as<double>());
+    cofactorMatrix.at(nrElems).push_back(res[0][0].as<double>());
+
     assert(cofactorMatrix.size() == cofactorMatrix.at(i).size());
   }
+
+  // intercept
+  // n,n
+  auto res{n.exec("SELECT agg FROM Q" + intercept + " WHERE deg = 0;")};
+  assert(res.size() == 1);
+  assert(res[0].size() == 1);
+  cofactorMatrix.at(nrElems).push_back(res[0][0].as<double>());
 }
 
 std::string stringOfVector(const std::vector<long>& array) {
@@ -198,13 +216,14 @@ std::string stringOfVector(const std::vector<long>& array) {
 
 /**
  * assumes label being at index 0 of relevantColumns
+ * and intercept being at last index of relevantColumns
  *
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Chapter 4)
  * URL: https://doi.org/10.14778/3007263.3007312
  **/
 std::vector<double> batchGradientDescent(const std::vector<std::string>& relevantColumns,
                                          pqxx::connection& c) {
-  std::vector<std::vector<long>> cofactorMatrix(relevantColumns.size(), std::vector<long>{});
+  std::vector<std::vector<double>> cofactorMatrix(relevantColumns.size(), std::vector<double>{});
   fillMatrix(relevantColumns, c, cofactorMatrix);
 
   // for (const auto& x : cofactorMatrix) {
@@ -215,10 +234,8 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
 
   // start with some initial value
   std::vector<double> theta(n, 1.);
-  // std::vector<double> theta(n, 190.6);
   // label is fixed with -1
-  theta.at(0) = -1.;
-  // theta.at(2) = 45.8;
+  theta.at(0) = -1;
 
   // TODO: find good values
   double alpha{0.003};
@@ -226,6 +243,7 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
 
   // repeat until error is sufficiently small
   const double eps{1e-6};
+  const double abortAlpha{1e-10};
   bool notExact{true};
 
   std::vector<double> epsilon(n, INFINITY);
@@ -256,11 +274,11 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
         notExact = true;
 
         // alpha needs adjusting
-        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e6) {
+        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e4) {
           // alpha = std::min(alpha / 3, std::fabs(epsilon.at(j) / epsilonNew));
           alpha /= 3;
           epsilonNew /= 3;
-          if (alpha < 1e-10) {
+          if (alpha < abortAlpha) {
             break;
           }
         }
@@ -271,7 +289,7 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       epsilon.at(j) = epsilonNew;
     }
 
-    if (alpha < 1e-10) {
+    if (alpha < abortAlpha) {
       std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
       break;
     }

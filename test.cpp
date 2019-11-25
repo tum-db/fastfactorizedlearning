@@ -180,12 +180,12 @@ std::string stringOfVector(const std::vector<double>& array) {
 }
 
 double testResult(const std::vector<double>& theta, const std::vector<int>& x) {
-  assert(x.size() + 1 == theta.size());
+  assert(x.size() + 2 == theta.size());
   double res{0.};
   for (size_t i{0}; i < x.size(); ++i) {
     res += theta.at(i + 1) * x.at(i);
   }
-  return res;
+  return res + theta.back();
 }
 
 void testSales() {
@@ -209,16 +209,25 @@ void testSales() {
       std::cout << "Creation of tables and views complete.\n\n";
 
       // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
-      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale"};
+      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
 
       std::vector<double> theta = batchGradientDescent(relevantColumns, c);
       std::cout << "Batch Gradient descent complete\n";
       std::cout << stringOfVector(theta) << '\n';
 
-      // for (int i{0}; i < 5; ++i) {
-      //   for (int j{0}; j < 5; ++j) {
+      // theta.at(1) = (theta.at(1)) / 98;
+      // // theta.at(1) = (theta.at(1)) / 88;
+      // theta.at(2) = (theta.at(2)) / 81;
+      // // theta.at(2) = (theta.at(2)) / 110;
+      // theta.at(3) = (theta.at(3)) / 1767250;
+      // // theta.at(3) = (theta.at(3)) / 47339;
+
+      // std::cout << stringOfVector(theta) << '\n';
+
+      // for (int i{0}; i < 3; ++i) {
+      //   for (int j{-69}; j < -65; ++j) {
       //     std::vector<int> x{i, j};
-      //     std::cout << i << " + 2*" << j << " = " << testResult(theta, x) << '\n';
+      //     std::cout << "13782.6*" << i << " + 5141.8*" << j << " = " << testResult(theta, x) << '\n';
       //   }
       // }
 
@@ -248,7 +257,7 @@ std::vector<double> testSales(pqxx::connection& c) {
   // std::cout << "Creation of tables and views complete.\n\n";
 
   // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
-  std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale"};
+  std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
 
   std::vector<double> theta = batchGradientDescent(relevantColumns, c);
   // std::cout << "Batch Gradient descent complete\n";
@@ -273,7 +282,8 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
 
   std::random_device rd;
   std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dis(2, 10);
+  std::uniform_int_distribution<> dis(4, 100);
+  std::uniform_int_distribution<> valuesDis(-2, 2);
 
   // Competition Values
   std::string query = "INSERT INTO Competition VALUES";
@@ -283,7 +293,7 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
   competitor.reserve(numberCompetitors);
 
   for (size_t i{0}; i < numberCompetitors; ++i) {
-    int x{dis(gen) * dis(gen) + dis(gen)};
+    int x{valuesDis(gen)};
     competitor.push_back(x);
 
     query += "(" + std::to_string(i) + "," + std::to_string(x) + ")";
@@ -306,7 +316,7 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
   sale.reserve(numberSales);
 
   for (size_t i{0}; i < numberSales; ++i) {
-    int x{dis(gen) * dis(gen) + dis(gen)};
+    int x{valuesDis(gen)};
     sale.push_back(x);
 
     query += "('randomProduct" + std::to_string(i) + "'," + std::to_string(x) + ")";
@@ -362,16 +372,31 @@ void testRandom() {
         std::vector<double> theta = testSales(c);
         // std::cout << stringOfVector(theta) << '\n';
 
-        assert(theta.size() == realTheta.size() + 1);
+        assert(theta.size() == realTheta.size() + 2);
+        double sum{0.};
         for (size_t i{0}; i < realTheta.size(); ++i) {
-          if (std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) > 0.05) {
+          sum += realTheta.at(i);
+          if (std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) > 0.06) {
             std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-            std::cout << "Relative error: " << (theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i) << '\n';
+            std::cout << "Relative error: "
+                      << std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) << '\n';
+            std::cout << "Testcase nr: " << testCase << '\n';
             std::cout << stringOfVector(theta) << '\n';
             std::cout << stringOfVector(realTheta) << '\n';
             c.disconnect();
             return;
           }
+        }
+
+        // constant value
+        if (std::fabs(theta.back() / sum) > 0.2) {
+          std::cout << "Got: " << theta.back() << " instead of 0\n";
+          std::cout << "Relative error: " << std::fabs(theta.back() / sum) << '\n';
+          std::cout << "Testcase nr: " << testCase << '\n';
+          std::cout << stringOfVector(theta) << '\n';
+          std::cout << stringOfVector(realTheta) << '\n';
+          c.disconnect();
+          return;
         }
       }
 
@@ -408,8 +433,8 @@ void testFavorita() {
       std::cout << "Creation of tables and views complete.\n\n";
 
       // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
-      std::vector<std::string> relevantColumns{"unit_sales", "id",       "date",
-                                               "store_nbr",  "item_nbr", "onpromotion"};
+      std::vector<std::string> relevantColumns{"unit_sales", "id",          "date", "store_nbr",
+                                               "item_nbr",   "onpromotion", "T"};
 
       std::vector<double> theta = batchGradientDescent(relevantColumns, c);
       std::cout << "Batch Gradient descent complete\n";
@@ -435,12 +460,12 @@ void testFavorita() {
 int main() {
   // std::cout << std::boolalpha;
 
-  testSales();
+  // testSales();
 
   // std::cout << "\n\n";
   // testFavorita();
 
-  // testRandom();
+  testRandom();
 
   return 0;
 }
