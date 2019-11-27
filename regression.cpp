@@ -1,5 +1,5 @@
+#include <pqxx/pqxx>
 #include <vector>
-#include <unordered_set>
 #include <string>
 #include <iostream>
 #include <cassert>
@@ -8,6 +8,141 @@
 #include "regression.h"
 
 typedef std::string sql;
+
+/**
+ * applies feature scaling to all features in relevantColumns
+ *
+ * assumes label being at index 0 of relevantColumns
+ * and intercept being at last index of relevantColumns
+ *
+ * leaves need to contain at least all Nodes representing tables which contain a relevant column
+ * e.g. if tables "store" and "sale" both have column "date" (and "date" is a feature or label)
+ * both of them should be included in leaves
+ **/
+std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
+                                        std::vector<ExtendedVariableOrder*>& leaves, pqxx::connection& c,
+                                        const bool useRange) {
+  size_t n{relevantColumns.size() - 1};
+  assert(n > 2);
+
+  // columns that need converting
+  std::vector<std::vector<size_t>> convertCols(leaves.size(), std::vector<size_t>{});
+
+  // find out which columns appear in which table(s)
+  std::vector<std::vector<size_t>> relevantTables(n, std::vector<size_t>{});
+  for (size_t i{0}; i < leaves.size(); ++i) {
+    assert(leaves.at(i)->isLeaf());
+    convertCols.at(i).reserve(leaves.at(i)->getKey().size());
+
+    const std::vector<std::string>& keys{leaves.at(i)->getKey()};
+    for (size_t col{0}; col < keys.size(); ++col) {
+      for (size_t j{0}; j < n; ++j) {
+        // column j appears in table i
+        if (keys.at(col) == relevantColumns.at(j)) {
+          relevantTables.at(j).push_back(i);
+
+          // table needs changing
+          if (j > 0) {
+            convertCols.at(i).push_back(j);
+          }
+          // other columns can't match
+          break;
+        }
+      }
+    }
+  }
+
+  pqxx::work transaction{c};
+  std::vector<scaleFactors> aggregates;
+  aggregates.reserve(n + 1);
+
+  // compute the required aggregates
+  for (size_t i{0}; i < n; ++i) {
+    const sql& column{relevantColumns.at(i)};
+
+    sql query{""};
+    bool first{true};
+    for (const size_t j : relevantTables.at(i)) {
+      if (first) {
+        first = false;
+        query = "WITH unionOfAllTables AS (SELECT " + column + " FROM " + leaves.at(j)->getName();
+      } else {
+        query += " UNION SELECT " + column + " FROM " + leaves.at(j)->getName();
+      }
+    }
+    query += ") ";
+
+    const sql select{"SELECT AVG(" + column + ") as avg, MAX(" + column + ") AS max, MIN(" + column +
+                     ") as min FROM unionOfAllTables;"};
+
+    auto res{transaction.exec(query + select)};
+    assert(res.size() == 1);
+    assert(res[0].size() == 3);
+
+    aggregates.push_back({res[0][0].as<double>(), res[0][1].as<double>()});
+    // TODO: figure out which variation gives better results
+    if (useRange) {
+      aggregates.at(i).max -= res[0][2].as<double>();
+    } else {
+      aggregates.at(i).max = std::max(aggregates.at(i).max, -res[0][2].as<double>());
+    }
+
+    // TODO: don't scale if it's already small
+    if (aggregates.at(i).max == 0.) {
+      aggregates.at(i) = {0., 1.};
+    }
+  }
+
+  // move scaling factors of label to the intercept (don't scale label)
+  aggregates.push_back(aggregates.front());
+  aggregates.front() = {0., 1.};
+
+  // compute new tables if necessary
+  for (size_t i{0}; i < leaves.size(); ++i) {
+    if (convertCols.at(i).size() == 0) {
+      continue;
+    }
+
+    const sql orig{leaves.at(i)->getName()};
+    leaves.at(i)->convertName({});
+    // CREATE converted table
+    sql query{"CREATE TABLE " + leaves.at(i)->getName() + " AS SELECT "};
+
+    const std::vector<std::string>& keys{leaves.at(i)->getKey()};
+    assert(keys.size() >= convertCols.at(i).size());
+
+    const std::string* curCol{&relevantColumns.at(convertCols.at(i).at(0))};
+    for (size_t j{0}, k{0}; j < keys.size(); ++j) {
+      if (j > 0) {
+        query += ", ";
+      }
+
+      // column remains unchanged
+      if (curCol == NULL || *curCol != keys.at(j)) {
+        query += keys.at(j);
+
+        // perform scaling
+      } else {
+        // xnew = (x - avg) / max
+        query += "(" + *curCol + " - " + std::to_string(aggregates.at(convertCols.at(i).at(k)).avg) + ") / " +
+                 std::to_string(aggregates.at(convertCols.at(i).at(k)).max) + " AS " + *curCol;
+
+        // move to next column that requires change
+        if (++k >= convertCols.at(i).size()) {
+          curCol = NULL;
+        } else {
+          curCol = &relevantColumns.at(convertCols.at(i).at(k));
+        }
+      }
+    }
+
+    transaction.exec(query + " FROM " + orig);
+  }
+
+  transaction.commit();
+
+  return aggregates;
+}
 
 /**
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Figure 5)

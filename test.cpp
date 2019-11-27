@@ -1,9 +1,9 @@
+#include <pqxx/pqxx>
 #include <vector>
-#include <unordered_set>
 #include <string>
 #include <iostream>
-#include <pqxx/pqxx>
 #include <cassert>
+#include <cmath>
 #include <random>
 #include "variableOrder.h"
 #include "regression.h"
@@ -132,8 +132,17 @@ void printVarOrder(const ExtendedVariableOrder& root) {
 void dropAll(pqxx::work& w, const ExtendedVariableOrder& root) {
   w.exec("DROP TABLE IF EXISTS " + root.getName() + "_type CASCADE;");
   w.exec("DROP VIEW IF EXISTS Q" + root.getName() + " CASCADE;");
-  for (const auto& x : root.getChildren()) {
-    dropAll(w, x);
+
+  if (root.isLeaf()) {
+    // DROP tables created by feature scaling
+    w.exec("DROP TABLE IF EXISTS " + root.getName() + "_conv_type CASCADE;");
+    w.exec("DROP TABLE IF EXISTS " + root.getName() + "_conv CASCADE;");
+    w.exec("DROP VIEW IF EXISTS Q" + root.getName() + "_conv CASCADE;");
+
+  } else {
+    for (const auto& x : root.getChildren()) {
+      dropAll(w, x);
+    }
   }
 }
 
@@ -205,11 +214,18 @@ void testSales() {
       std::cout << "Dropped all tables and views.\n";
       // std::cin.ignore();
 
+      std::vector<ExtendedVariableOrder*> leaves;
+      varOrder.findLeaves(leaves);
+
+      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
+
+      std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, c, false)};
+      std::cout << "Feature Scaling complete\n";
+
       factorizeSQL(varOrder, c);
       std::cout << "Creation of tables and views complete.\n\n";
 
       // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
-      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
 
       std::vector<double> theta = batchGradientDescent(relevantColumns, c);
       std::cout << "Batch Gradient descent complete\n";
@@ -221,6 +237,13 @@ void testSales() {
       // // theta.at(2) = (theta.at(2)) / 110;
       // theta.at(3) = (theta.at(3)) / 1767250;
       // // theta.at(3) = (theta.at(3)) / 47339;
+
+      // scale result
+      assert(theta.size() == scaleAggs.size());
+      for (size_t i{1}; i < theta.size(); ++i) {
+        theta.at(i) /= scaleAggs.at(i).max;
+      }
+      std::cout << stringOfVector(theta) << '\n';
 
       // std::cout << stringOfVector(theta) << '\n';
 
@@ -241,7 +264,7 @@ void testSales() {
   }
 }
 
-std::vector<double> testSales(pqxx::connection& c) {
+std::vector<double> testSales(pqxx::connection& c, int version, double& avg) {
   ExtendedVariableOrder varOrder{createSales()};
   // printVarOrder(varOrder);
   // std::cout << '\n';
@@ -253,15 +276,37 @@ std::vector<double> testSales(pqxx::connection& c) {
   // std::cout << "Dropped all tables and views.\n";
   // std::cin.ignore();
 
+  std::vector<ExtendedVariableOrder*> leaves;
+  varOrder.findLeaves(leaves);
+
+  std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
+
+  std::vector<scaleFactors> scaleAggs{};
+  if (version > 0)
+    scaleAggs = scaleFeatures(relevantColumns, leaves, c, version % 2 == 0);
+  // std::cout << "Feature Scaling complete\n";
+
   factorizeSQL(varOrder, c);
   // std::cout << "Creation of tables and views complete.\n\n";
 
   // std::vector<std::string> relevantColumns{varOrderToList(varOrder)};
-  std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
 
   std::vector<double> theta = batchGradientDescent(relevantColumns, c);
   // std::cout << "Batch Gradient descent complete\n";
   // std::cout << stringOfVector(theta) << '\n';
+
+  // scale result
+  if (version > 0) {
+    assert(theta.size() == scaleAggs.size());
+    for (size_t i{1}; i < theta.size(); ++i) {
+      if (version > 2) {
+        theta.at(i) -= scaleAggs.at(i).avg;
+      }
+      theta.at(i) /= scaleAggs.at(i).max;
+    }
+  }
+
+  avg = scaleAggs.back().avg;
 
   return theta;
 }
@@ -282,8 +327,8 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
 
   std::random_device rd;
   std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dis(4, 100);
-  std::uniform_int_distribution<> valuesDis(-2, 2);
+  std::uniform_int_distribution<> dis(3, 100);
+  std::uniform_int_distribution<> valuesDis(-200, 200);
 
   // Competition Values
   std::string query = "INSERT INTO Competition VALUES";
@@ -332,15 +377,15 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
   // END Sales
 
   // generate random factors
-  std::uniform_real_distribution<> realDis(0.1, 20000.);
-  std::vector<double> theta{realDis(gen), realDis(gen)};
+  std::uniform_real_distribution<> realDis(-20000., 20000.);
+  std::vector<double> theta{realDis(gen), realDis(gen), 0.};
 
   // Branch VALUES
   query = "INSERT INTO Branch VALUES";
 
   for (size_t i{0}; i < numberCompetitors; ++i) {
     for (size_t j{0}; j < numberSales; ++j) {
-      double res{theta.front() * competitor.at(i) + theta.back() * sale.at(j)};
+      double res{theta.front() * competitor.at(i) + theta.at(1) * sale.at(j) + theta.back()};
       query +=
           "(" + std::to_string(i) + ",'randomProduct" + std::to_string(j) + "'," + std::to_string(res) + ")";
 
@@ -366,42 +411,129 @@ void testRandom() {
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 
-      for (int testCase{0}; testCase < 10000; ++testCase) {
-        std::vector<double> realTheta = createRandomSales(c);
+      bool stop{false};
+
+      const size_t maxVersion{5};
+      std::vector<double> maxRelError(maxVersion, 0.);
+      std::vector<double> minRelError(maxVersion, INFINITY);
+      std::vector<double> totalRelError(maxVersion, 0.);
+      std::vector<double> maxAbsError(maxVersion, 0.);
+      std::vector<double> minAbsError(maxVersion, INFINITY);
+      std::vector<double> totalAbsError(maxVersion, 0.);
+      std::vector<double> maxConsError(maxVersion, 0.);
+      std::vector<double> minConsError(maxVersion, INFINITY);
+      std::vector<double> totalConsError(maxVersion, 0.);
+
+      size_t testCase{0};
+      for (; testCase < 1000 && !stop; ++testCase) {
+        std::vector<double> realTheta{createRandomSales(c)};
+        // std::vector<double> realTheta{12453.736615, 6132.816397, 0.000000};
         // std::cout << stringOfVector(realTheta) << '\n';
-        std::vector<double> theta = testSales(c);
-        // std::cout << stringOfVector(theta) << '\n';
 
-        assert(theta.size() == realTheta.size() + 2);
-        double sum{0.};
-        for (size_t i{0}; i < realTheta.size(); ++i) {
-          sum += realTheta.at(i);
-          if (std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) > 0.06) {
-            std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-            std::cout << "Relative error: "
-                      << std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i)) << '\n';
-            std::cout << "Testcase nr: " << testCase << '\n';
-            std::cout << stringOfVector(theta) << '\n';
-            std::cout << stringOfVector(realTheta) << '\n';
-            c.disconnect();
-            return;
+        for (size_t version{1}; version < maxVersion; ++version) {
+          double avg{INFINITY};
+          std::vector<double> theta = testSales(c, version, avg);
+          // std::cout << stringOfVector(theta) << '\n';
+
+          assert(theta.size() == realTheta.size() + 1);
+          // double sum{0.};
+          for (size_t i{0}; i < realTheta.size(); ++i) {
+            // sum += std::fabs(realTheta.at(i));
+
+            // special case for constant term to check its relevance
+            if (i == realTheta.size() - 1) {
+              double error{std::fabs(theta.at(i + 1) - realTheta.at(i))};
+
+              // update statistics
+              if (maxConsError.at(version) < error) {
+                maxConsError.at(version) = error;
+              }
+              if (minConsError.at(version) > error) {
+                minConsError.at(version) = error;
+              }
+              totalConsError.at(version) += error;
+
+              if (std::fabs(error / avg) > 0.05) {
+                std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
+                std::cout << "Relevance error: " << std::fabs(error / avg) << '\n';
+                std::cout << "Avg: " << avg << '\n';
+                std::cout << "Testcase nr: " << testCase << " on version: " << version << '\n';
+                std::cout << stringOfVector(theta) << '\n';
+                std::cout << stringOfVector(realTheta) << '\n';
+                stop = true;
+              }
+
+              // absolute error
+            } else if (std::fabs(realTheta.at(i)) < 1.) {
+              double error{std::fabs(theta.at(i + 1) - realTheta.at(i))};
+
+              // update statistics
+              if (maxAbsError.at(version) < error) {
+                maxAbsError.at(version) = error;
+              }
+              if (minAbsError.at(version) > error) {
+                minAbsError.at(version) = error;
+              }
+              totalAbsError.at(version) += error;
+
+              if (error > 0.5) {
+                std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
+                std::cout << "Absolute error: " << error << '\n';
+                std::cout << "Testcase nr: " << testCase << " on version: " << version << '\n';
+                std::cout << stringOfVector(theta) << '\n';
+                std::cout << stringOfVector(realTheta) << '\n';
+                stop = true;
+              }
+
+              // relative error
+            } else {
+              double error{std::fabs((theta.at(i + 1) - realTheta.at(i)) / realTheta.at(i))};
+
+              // update statistics
+              if (maxRelError.at(version) < error) {
+                maxRelError.at(version) = error;
+              }
+              if (minRelError.at(version) > error) {
+                minRelError.at(version) = error;
+              }
+              totalRelError.at(version) += error;
+
+              if (error > 0.05) {
+                std::cout << stringOfVector(theta) << '\n';
+                std::cout << stringOfVector(realTheta) << '\n';
+                std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
+                std::cout << "Relative error: " << error << '\n';
+                std::cout << "Testcase nr: " << testCase << " on version: " << version << '\n';
+                stop = true;
+              }
+            }
           }
-        }
-
-        // constant value
-        if (std::fabs(theta.back() / sum) > 0.2) {
-          std::cout << "Got: " << theta.back() << " instead of 0\n";
-          std::cout << "Relative error: " << std::fabs(theta.back() / sum) << '\n';
-          std::cout << "Testcase nr: " << testCase << '\n';
-          std::cout << stringOfVector(theta) << '\n';
-          std::cout << stringOfVector(realTheta) << '\n';
-          c.disconnect();
-          return;
         }
       }
 
-      std::cout << "All tests passed!\n";
       c.disconnect();
+
+      // test failed
+      if (!stop) {
+        std::cout << "All tests passed!\n";
+      }
+
+      std::cout << '\n';
+      for (size_t version{1}; version < maxVersion; ++version) {
+        std::cout << "Version: " << version << '\n';
+        std::cout << "maxRelError: " << maxRelError.at(version) << ", ";
+        std::cout << "minRelError: " << minRelError.at(version) << ", ";
+        std::cout << "avgRelError: " << totalRelError.at(version) / testCase << ", ";
+        std::cout << '\n';
+        std::cout << "maxAbsError: " << maxAbsError.at(version) << ", ";
+        std::cout << "minAbsError: " << minAbsError.at(version) << ", ";
+        std::cout << "avgAbsError: " << totalAbsError.at(version) / testCase << ", ";
+        std::cout << '\n';
+        std::cout << "maxConsError: " << maxConsError.at(version) << ", ";
+        std::cout << "minConsError: " << minConsError.at(version) << ", ";
+        std::cout << "avgConsError: " << totalConsError.at(version) / testCase << "\n";
+      }
+
     } else {
       std::cout << "Failed to connect!\n";
     }
