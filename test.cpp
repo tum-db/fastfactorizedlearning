@@ -295,16 +295,23 @@ std::vector<double> testSales(pqxx::connection& c, int version, double& avg) {
   // std::cout << "Batch Gradient descent complete\n";
   // std::cout << stringOfVector(theta) << '\n';
 
+  // for the constant term
+  double sum{0.};
+
   // scale result
   if (version > 0) {
     assert(theta.size() == scaleAggs.size());
-    for (size_t i{1}; i < theta.size(); ++i) {
+    for (size_t i{1}; i < theta.size() - 1; ++i) {
       if (version > 2) {
         theta.at(i) -= scaleAggs.at(i).avg;
       }
       theta.at(i) /= scaleAggs.at(i).max;
+
+      sum += theta.at(i) * scaleAggs.at(i).avg;
     }
   }
+
+  theta.back() = scaleAggs.back().avg - sum;
 
   avg = scaleAggs.back().avg;
 
@@ -378,7 +385,7 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
 
   // generate random factors
   std::uniform_real_distribution<> realDis(-20000., 20000.);
-  std::vector<double> theta{realDis(gen), realDis(gen), 0.};
+  std::vector<double> theta{realDis(gen), realDis(gen), realDis(gen)};
 
   // Branch VALUES
   query = "INSERT INTO Branch VALUES";
@@ -427,7 +434,7 @@ void testRandom() {
       size_t testCase{0};
       for (; testCase < 1000 && !stop; ++testCase) {
         std::vector<double> realTheta{createRandomSales(c)};
-        // std::vector<double> realTheta{12453.736615, 6132.816397, 0.000000};
+        // std::vector<double> realTheta{1940.740047, -10381.564591, -816.464399};
         // std::cout << stringOfVector(realTheta) << '\n';
 
         for (size_t version{1}; version < maxVersion; ++version) {
@@ -453,9 +460,9 @@ void testRandom() {
               }
               totalConsError.at(version) += error;
 
-              if (std::fabs(error / avg) > 0.05) {
+              if (error / realTheta.back() > 0.3 && std::fabs(error / avg) > 0.005) {
                 std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-                std::cout << "Relevance error: " << std::fabs(error / avg) << '\n';
+                std::cout << "Relevance error: " << error << '\n';
                 std::cout << "Avg: " << avg << '\n';
                 std::cout << "Testcase nr: " << testCase << " on version: " << version << '\n';
                 std::cout << stringOfVector(theta) << '\n';
@@ -533,11 +540,9 @@ void testRandom() {
         std::cout << "minConsError: " << minConsError.at(version) << ", ";
         std::cout << "avgConsError: " << totalConsError.at(version) / testCase << "\n";
       }
-
     } else {
       std::cout << "Failed to connect!\n";
     }
-
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     exit(1);
