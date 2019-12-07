@@ -23,7 +23,7 @@ class ExtendedVariableOrder {
   const variable& getName() const;
   const std::vector<variable>& getKey() const;
   const std::vector<ExtendedVariableOrder>& getChildren() const;
-  
+
   void findLeaves(std::vector<ExtendedVariableOrder*>& leaves);
 
   bool isLeaf() const;
@@ -38,7 +38,7 @@ class ExtendedVariableOrder {
     nameKey() {}
     friend std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
                                                    std::vector<ExtendedVariableOrder*>& leaves,
-                                                   pqxx::connection& c, bool useRange);
+                                                   pqxx::connection& c);
   };
 
   void convertName(nameKey);

@@ -20,31 +20,23 @@ typedef std::string sql;
  * both of them should be included in leaves
  **/
 std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
-                                        std::vector<ExtendedVariableOrder*>& leaves, pqxx::connection& c,
-                                        const bool useRange) {
+                                        std::vector<ExtendedVariableOrder*>& leaves, pqxx::connection& c) {
   size_t n{relevantColumns.size() - 1};
   assert(n > 2);
-
-  // columns that need converting
-  std::vector<std::vector<size_t>> convertCols(leaves.size(), std::vector<size_t>{});
 
   // find out which columns appear in which table(s)
   std::vector<std::vector<size_t>> relevantTables(n, std::vector<size_t>{});
   for (size_t i{0}; i < leaves.size(); ++i) {
     assert(leaves.at(i)->isLeaf());
-    convertCols.at(i).reserve(leaves.at(i)->getKey().size());
+    // convertCols.at(i).reserve(leaves.at(i)->getKey().size());
 
     const std::vector<std::string>& keys{leaves.at(i)->getKey()};
-    for (size_t col{0}; col < keys.size(); ++col) {
+    for (const auto& col : keys) {
       for (size_t j{0}; j < n; ++j) {
         // column j appears in table i
-        if (keys.at(col) == relevantColumns.at(j)) {
+        if (col == relevantColumns.at(j)) {
           relevantTables.at(j).push_back(i);
 
-          // table needs changing
-          if (j > 0) {
-            convertCols.at(i).push_back(j);
-          }
           // other columns can't match
           break;
         }
@@ -55,6 +47,9 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
   pqxx::work transaction{c};
   std::vector<scaleFactors> aggregates;
   aggregates.reserve(n + 1);
+
+  // columns that need converting
+  std::vector<std::vector<size_t>> convertCols(leaves.size(), std::vector<size_t>{});
 
   // compute the required aggregates
   for (size_t i{0}; i < n; ++i) {
@@ -80,22 +75,22 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     assert(res[0].size() == 3);
 
     aggregates.push_back({res[0][0].as<double>(), res[0][1].as<double>()});
-    // TODO: figure out which variation gives better results
-    if (useRange) {
-      aggregates.at(i).max -= res[0][2].as<double>();
-    } else {
-      aggregates.at(i).max = std::max(aggregates.at(i).max, -res[0][2].as<double>());
-    }
+    aggregates.at(i).max = std::max(aggregates.at(i).max, -res[0][2].as<double>());
 
-    // TODO: don't scale if it's already small
-    if (aggregates.at(i).max == 0.) {
+    // don't scale if it's already good
+    if (aggregates.at(i).max == 0. || (aggregates.at(i).max < 5 && aggregates.at(i).max > 0.1)) {
       aggregates.at(i) = {0., 1.};
+
+    } else {
+      // column i appears in table j
+      for (const size_t j : relevantTables.at(i)) {
+        // table needs changing
+        if (i > 0) {
+          convertCols.at(j).push_back(i);
+        }
+      }
     }
   }
-
-  // move scaling factors of label to the intercept (don't scale label)
-  aggregates.push_back(aggregates.front());
-  aggregates.front() = {0., 1.};
 
   // compute new tables if necessary
   for (size_t i{0}; i < leaves.size(); ++i) {
@@ -439,7 +434,48 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   return theta;
 }
 
-/* sql factorizeSQL(const ExtendedVariableOrder& varOrder) {
-  int id{0};
-  return factorizeSQL(varOrder, id);
-} */
+/**
+ * uses feature scaling, factorize-SQL and batch gradient descent to return values for theta
+ *
+ * assumes label being at index 0 of relevantColumns
+ * and intercept being at last index of relevantColumns
+ *
+ * stores average value of the label in avg
+ *
+ */
+std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
+                                     const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                     double& avg) {
+  std::vector<ExtendedVariableOrder*> leaves;
+  varOrder.findLeaves(leaves);
+
+  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, c)};
+  // std::cout << "Feature Scaling complete\n";
+
+  factorizeSQL(varOrder, c);
+  // std::cout << "Creation of tables and views complete.\n\n";
+
+  std::vector<double> theta{batchGradientDescent(relevantColumns, c)};
+  assert(theta.size() == relevantColumns.size());
+  // std::cout << "Batch Gradient descent complete.\n";
+  // std::cout << stringOfVector(theta) << '\n';
+
+  // for the constant term
+  double sum{0.};
+
+  // scale result
+  assert(theta.size() == scaleAggs.size() + 1);
+  for (size_t i{1}; i < scaleAggs.size(); ++i) {
+    theta.at(i) /= scaleAggs.at(i).max;
+
+    sum += theta.at(i) * scaleAggs.at(i).avg;
+  }
+
+  theta.back() = scaleAggs.front().avg - sum;
+
+  // std::cout << stringOfVector(theta) << '\n';
+
+  avg = scaleAggs.front().avg;
+
+  return theta;
+}
