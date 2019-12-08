@@ -219,10 +219,10 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
 
   // and recreate
   w.exec(
-      "CREATE TABLE Competition(Location integer NOT NULL, Competitor integer NOT NULL) TABLESPACE thesis;");
+      "CREATE TABLE Competition(Location integer NOT NULL, Competitor integer NOT NULL);");
   w.exec("CREATE TABLE Branch(Location integer NOT NULL, Product varchar(30) NOT NULL, Inventory integer NOT "
-         "NULL) TABLESPACE thesis;");
-  w.exec("CREATE TABLE Sales(Product varchar(30) NOT NULL, Sale integer NOT NULL) TABLESPACE thesis;");
+         "NULL);");
+  w.exec("CREATE TABLE Sales(Product varchar(30) NOT NULL, Sale integer NOT NULL);");
 
   std::random_device rd;
   std::mt19937 gen(rd());
