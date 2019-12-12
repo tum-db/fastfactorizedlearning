@@ -67,15 +67,19 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     }
     query += ") ";
 
-    const sql select{"SELECT AVG(" + column + ") as avg, MAX(" + column + ") AS max, MIN(" + column +
-                     ") as min FROM unionOfAllTables;"};
+    const sql select{"SELECT AVG(" + column + ") as avg, MAX(ABS(" + column +
+                     ")) AS max FROM unionOfAllTables;"};
 
     auto res{transaction.exec(query + select)};
     assert(res.size() == 1);
     assert(res[0].size() == 3);
 
-    aggregates.push_back({res[0][0].as<double>(), res[0][1].as<double>()});
-    aggregates.at(i).max = std::max(aggregates.at(i).max, -res[0][2].as<double>());
+    // don't scale if no value is distinct from null
+    if (res[0][0].is_null()) {
+      aggregates.push_back({0, 1});
+    } else {
+      aggregates.push_back({res[0][0].as<double>(), res[0][1].as<double>()});
+    }
 
     // don't scale if it's already good
     if (aggregates.at(i).max == 0. || (aggregates.at(i).max < 5 && aggregates.at(i).max > 0.1)) {
