@@ -72,7 +72,7 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
 
     auto res{transaction.exec(query + select)};
     assert(res.size() == 1);
-    assert(res[0].size() == 3);
+    assert(res[0].size() == 2);
 
     // don't scale if no value is distinct from null
     if (res[0][0].is_null()) {
