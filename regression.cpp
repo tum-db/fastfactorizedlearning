@@ -186,7 +186,8 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     if (varOrder.isCategorical()) {
       agg = "SUM(1";
     } else {
-      agg = "SUM(POWER(Q" + varOrder.getChildren().front().getName() + "." + name + "," + name + "_d)";
+      agg = "SUM(POWER(COALESCE(Q" + varOrder.getChildren().front().getName() + "." + name + ",0)," + name +
+            "_d)";
     }
 
     // ++id;
