@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <algorithm>
 #include "variableOrder.h"
 #include "regression.h"
 
@@ -26,6 +27,10 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
 
   // find out which columns appear in which table(s)
   std::vector<std::vector<size_t>> relevantTables(n, std::vector<size_t>{});
+
+  // columns that need converting
+  std::vector<std::vector<size_t>> convertCols(leaves.size(), std::vector<size_t>{});
+
   for (size_t i{0}; i < leaves.size(); ++i) {
     assert(leaves.at(i)->isLeaf());
     // convertCols.at(i).reserve(leaves.at(i)->getKey().size());
@@ -37,6 +42,11 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
         if (col == relevantColumns.at(j)) {
           relevantTables.at(j).push_back(i);
 
+          // table needs changing
+          if (j > 0) {
+            convertCols.at(i).push_back(j);
+          }
+
           // other columns can't match
           break;
         }
@@ -47,9 +57,6 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
   pqxx::work transaction{c};
   std::vector<scaleFactors> aggregates;
   aggregates.reserve(n + 1);
-
-  // columns that need converting
-  std::vector<std::vector<size_t>> convertCols(leaves.size(), std::vector<size_t>{});
 
   // compute the required aggregates
   for (size_t i{0}; i < n; ++i) {
@@ -84,15 +91,19 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     // don't scale if it's already good
     if (aggregates.at(i).max == 0. || (aggregates.at(i).max < 5 && aggregates.at(i).max > 0.1)) {
       aggregates.at(i) = {0., 1.};
-
-    } else {
-      // column i appears in table j
       for (const size_t j : relevantTables.at(i)) {
-        // table needs changing
-        if (i > 0) {
-          convertCols.at(j).push_back(i);
-        }
+        convertCols.at(j).erase(std::remove(convertCols.at(j).begin(), convertCols.at(j).end(), i),
+                                convertCols.at(j).end());
       }
+
+      // } else {
+      // // column i appears in table j
+      // for (const size_t j : relevantTables.at(i)) {
+      //   // table needs changing
+      //   if (i > 0) {
+      //     convertCols.at(j).push_back(i);
+      //   }
+      // }
     }
   }
 
@@ -123,8 +134,9 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
         // perform scaling
       } else {
         // xnew = (x - avg) / max
-        query += "(" + *curCol + " - " + std::to_string(aggregates.at(convertCols.at(i).at(k)).avg) + ") / " +
-                 std::to_string(aggregates.at(convertCols.at(i).at(k)).max) + " AS " + *curCol;
+        query += "((" + *curCol + " - " + std::to_string(aggregates.at(convertCols.at(i).at(k)).avg) +
+                 ") / " + std::to_string(aggregates.at(convertCols.at(i).at(k)).max) + ")::real AS " +
+                 *curCol;
 
         // move to next column that requires change
         if (++k >= convertCols.at(i).size()) {
@@ -147,7 +159,7 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Figure 5)
  * URL: https://doi.org/10.14778/3007263.3007312
  **/
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction) {
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::nontransaction& transaction) {
   const sql& name{varOrder.getName()};
   if (varOrder.isLeaf()) {
     transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50)," + name +
@@ -156,9 +168,8 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50)," << name
                << "d int);\nINSERT INTO " << name << "type VALUES ('" << name << "', 0);\n"; */
 
-    sql deg     = name + "_d AS " + name + "_deg",
-        lineage = "CONCAT('(', " + name + "_n, ',', " + name + "_d, ')') AS " + name + "_lineage",
-        agg     = "1 AS " + name + "_agg";
+    sql deg = name + "_d AS " + name + "_deg", lineage = "''AS " + name + "_lineage",
+        agg = "1 AS " + name + "_agg";
 
     sql schema{""};
     for (const sql& x : varOrder.getKey()) {
@@ -180,7 +191,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 
     // std::vector<sql> retChild;
     // retChild.reserve(varOrder.getChildren().size());
-    sql join{""}, lineage{"CONCAT('(', "}, deg{""}, agg;
+    sql join{""}, lineage{"CONCAT("}, deg{""}, agg;
 
     // categorical variables have to be treated differently => grouping instead of POWER
     if (varOrder.isCategorical()) {
@@ -210,7 +221,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
       // }
 
       deg += "Q" + xName + "." + xName + "_deg + ";
-      lineage += "Q" + xName + "." + xName + "_lineage, ',', ";
+      lineage += "Q" + xName + "." + xName + "_lineage,";
       agg += " * Q" + xName + "." + xName + "_agg";
 
       lastName = xName;
@@ -220,7 +231,8 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
     }
 
     deg += name + "_d";
-    lineage += name + "_n, ',', " + name + "_d, ')')";
+    lineage += "CASE WHEN " + name + "_d > 0 THEN CONCAT('(', " + name + "_n, ',', " + name +
+               "_d, ')') ELSE '' END)";
     agg += ")";
 
     sql key{""};
@@ -234,7 +246,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
       cat = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
     }
 
-    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
+    transaction.exec("CREATE TABLE Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
                      "_lineage, " + deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " +
                      join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " +
                      cat + key + lineage + ", " + deg + ");\n");
@@ -242,7 +254,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 }
 
 void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
-  pqxx::work transaction{c};
+  pqxx::nontransaction transaction{c};
   // special case for root/intercept to avoid redundancy and allow simpler varOrders
   const sql& name{varOrder.getName()};
   const int d = 1; // linear
@@ -250,7 +262,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
   assert(!varOrder.isLeaf());
 
   // process all children (usually just one)
-  sql join{""}, lineage{"CONCAT('(', "}, deg{""}, agg{"SUM("};
+  sql join{""}, lineage{"CONCAT("}, deg{""}, agg{"SUM("};
   bool first{true};
   for (const ExtendedVariableOrder& x : varOrder.getChildren()) {
     factorizeSQL(x, transaction);
@@ -271,11 +283,11 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
     }
   }
 
-  lineage += ", ')')";
+  lineage += ")";
   agg += ")";
 
   // combine the results
-  transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + lineage + " AS lineage, " + deg + " AS deg, " +
+  transaction.exec("CREATE TABLE Q" + name + " AS (SELECT " + lineage + " AS lineage, " + deg + " AS deg, " +
                    agg + " AS agg FROM " + join + " WHERE " + deg + " <= " + std::to_string(2 * d) +
                    " GROUP BY " + lineage + ", " + deg + ");\n");
 
@@ -296,15 +308,15 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
   for (size_t i{0}; i < nrElems; ++i) {
     // diagonal element
     const std::string& iName{relevantColumns.at(i)};
-    auto res{n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName + ",2%';")};
+    auto res{n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%(" + iName + ",2)%';")};
     assert(res.size() == 1);
     assert(res[0].size() == 1);
     cofactorMatrix.at(i).push_back(res[0][0].as<double>());
 
     for (size_t j{i + 1}; j < nrElems; ++j) {
       // i,j and j,i
-      res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName +
-                   ",1%' AND lineage LIKE '%," + relevantColumns.at(j) + ",1%';");
+      res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%(" + iName +
+                   ",1)%' AND lineage LIKE '%(" + relevantColumns.at(j) + ",1)%';");
       // std::cerr << i << ", " << j << "\n";
       assert(res.size() == 1);
       assert(res[0].size() == 1);
@@ -316,7 +328,7 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
 
     // intercept
     // i,n and n,i
-    res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%," + iName + ",1%' AND deg = 1;");
+    res = n.exec("SELECT agg FROM Q" + intercept + " WHERE lineage LIKE '%(" + iName + ",1)%' AND deg = 1;");
     assert(res.size() == 1);
     assert(res[0].size() == 1);
     cofactorMatrix.at(i).push_back(res[0][0].as<double>());
@@ -463,6 +475,141 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
   std::vector<double> theta{batchGradientDescent(relevantColumns, c)};
   assert(theta.size() == relevantColumns.size());
   // std::cout << "Batch Gradient descent complete.\n";
+  // std::cout << stringOfVector(theta) << '\n';
+
+  // for the constant term
+  double sum{0.};
+
+  // scale result
+  assert(theta.size() == scaleAggs.size() + 1);
+  for (size_t i{1}; i < scaleAggs.size(); ++i) {
+    theta.at(i) /= scaleAggs.at(i).max;
+
+    sum += theta.at(i) * scaleAggs.at(i).avg;
+  }
+
+  theta.back() = scaleAggs.front().avg - sum;
+
+  // std::cout << stringOfVector(theta) << '\n';
+
+  avg = scaleAggs.front().avg;
+
+  return theta;
+}
+
+std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pqxx::connection& c) {
+  const size_t n{relevantColumns.size()};
+
+  // start with some initial value
+  std::vector<double> theta(n, 1.);
+  // label is fixed with -1
+  theta.at(0) = -1;
+
+  // TODO: find good values
+  double alpha{0.003};
+  const double lambda{0.003};
+
+  // repeat until error is sufficiently small
+  const double eps{1e-6};
+  const double abortAlpha{1e-10};
+  bool notExact{true};
+
+  std::vector<double> epsilon(n, INFINITY);
+  int i{0};
+  while (notExact) {
+    if (++i > 100000000) {
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      break;
+    }
+    notExact = false;
+
+    // compute new epsilon for all features
+    for (size_t j{1}; j < n; ++j) {
+
+      sql epsilonQuery{"SELECT SUM(("};
+
+      for (size_t k{0}; k < n; ++k) {
+        if (k > 0) {
+          epsilonQuery += " + ";
+        }
+        epsilonQuery += std::to_string(theta.at(k)) + "*" + relevantColumns.at(k);
+      }
+      epsilonQuery += ")*" + relevantColumns.at(j) + ") FROM joinView";
+
+      // execute the Query
+      pqxx::nontransaction transaction{c};
+      auto res{transaction.exec(epsilonQuery)};
+      assert(res.size() == 1);
+      assert(res[0].size() == 1);
+      double epsilonNew{res[0][0].as<double>()};
+
+      // using ridge regularization term derived by theta_j
+      epsilonNew += lambda * 2 * theta.at(j);
+
+      epsilonNew *= alpha;
+
+      // not exact enough
+      if (std::fabs(epsilonNew) > eps) {
+        notExact = true;
+
+        // alpha needs adjusting
+        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e4) {
+          alpha /= 3;
+          epsilonNew /= 3;
+          if (alpha < abortAlpha) {
+            break;
+          }
+        }
+      }
+
+      epsilon.at(j) = epsilonNew;
+    }
+
+    if (alpha < abortAlpha) {
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      break;
+    }
+
+    // update theta
+    for (size_t j{1}; j < n; ++j) {
+      theta.at(j) -= epsilon.at(j);
+    }
+  }
+
+  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << '\n';
+
+  return theta;
+}
+
+std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
+                                    const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                    double& avg) {
+  std::vector<ExtendedVariableOrder*> leaves;
+  varOrder.findLeaves(leaves);
+
+  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, c)};
+  // std::cout << "Feature Scaling complete\n";
+
+  pqxx::work transaction{c};
+
+  transaction.exec("DROP VIEW IF EXISTS joinView;");
+
+  sql join{"CREATE VIEW joinView AS (SELECT* FROM "};
+
+  bool first{true};
+  for (const auto leaf : leaves) {
+    if (first) {
+      first = false;
+      join += leaf->getName();
+    } else {
+      join += " NATURAL JOIN " + leaf->getName();
+    }
+  }
+
+  transaction.exec(join + ")");
+  transaction.commit();
+
+  std::vector<double> theta{naiveBGD(relevantColumns, c)};
   // std::cout << stringOfVector(theta) << '\n';
 
   // for the constant term

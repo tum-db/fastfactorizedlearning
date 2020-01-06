@@ -49,48 +49,139 @@ ExtendedVariableOrder createSales() {
   return t;
 }
 
+ExtendedVariableOrder createTrain(const std::vector<std::string>& trainOrder, const size_t index = 0) {
+  if (index == trainOrder.size()) {
+    return {"train_conv", trainOrder};
+  }
+
+  ExtendedVariableOrder cur{trainOrder.at(index),
+                            {trainOrder.begin(), trainOrder.begin() + static_cast<int>(index)}};
+  cur.addChild(createTrain(trainOrder, index + 1));
+
+  if (index == 0) {
+    ExtendedVariableOrder t{"t"};
+    t.addChild(cur);
+
+    return t;
+  }
+  return cur;
+}
+
+ExtendedVariableOrder createFavorita(const std::vector<std::string>& trainOrder, const size_t index = 0) {
+  if (index == trainOrder.size()) {
+    return {"train_conv_small", trainOrder};
+  }
+
+  ExtendedVariableOrder cur{trainOrder.at(index),
+                            {trainOrder.begin(), trainOrder.begin() + static_cast<int>(index)}};
+  if (cur.getName() == "item_nbr") {
+    ExtendedVariableOrder items{"items", {"item_nbr", "family", "class", "perishable"}};
+    ExtendedVariableOrder clas{"class", {"item_nbr", "family", "perishable"}};
+    ExtendedVariableOrder family{"family", {"item_nbr", "perishable"}, true};
+    ExtendedVariableOrder perishable{"perishable", {"item_nbr"}};
+
+    clas.addChild(items);
+    family.addChild(clas);
+    perishable.addChild(family);
+    cur.addChild(perishable);
+
+  } else if (cur.getName() == "date") {
+    ExtendedVariableOrder transactions{"transactions_conv", {"date", "store_nbr", "txns"}};
+    ExtendedVariableOrder txns{"txns", {"date", "store_nbr"}};
+
+    txns.addChild(transactions);
+    cur.addChild(txns);
+
+    ExtendedVariableOrder oil{"oil_conv", {"date", "dcoilwtico"}};
+    ExtendedVariableOrder dcoilwtico{"dcoilwtico", {"date"}};
+
+    dcoilwtico.addChild(oil);
+    cur.addChild(dcoilwtico);
+
+    ExtendedVariableOrder holidays_events{
+        "holidays_events_conv", {"date", "type", "locale", "locale_name", "description", "transferred"}};
+    ExtendedVariableOrder description{
+        "description", {"date", "type", "locale", "locale_name", "transferred"}, true};
+    ExtendedVariableOrder locale_name{"locale_name", {"date", "type", "locale", "transferred"}, true};
+    ExtendedVariableOrder type{"type", {"date", "locale", "transferred"}, true};
+    ExtendedVariableOrder locale{"locale", {"date", "transferred"}, true};
+    ExtendedVariableOrder transferred{"transferred", {"date"}, true};
+
+    description.addChild(holidays_events);
+    locale_name.addChild(description);
+    type.addChild(locale_name);
+    locale.addChild(type);
+    transferred.addChild(locale);
+    cur.addChild(transferred);
+
+  } else if (cur.getName() == "store_nbr") {
+    ExtendedVariableOrder stores{"stores", {"store_nbr", "city", "state", "stype", "cluster"}};
+    ExtendedVariableOrder city{"city", {"store_nbr", "state", "stype", "cluster"}, true};
+    ExtendedVariableOrder state{"state", {"store_nbr", "stype", "cluster"}, true};
+    ExtendedVariableOrder cluster{"cluster", {"stype", "store_nbr"}};
+    ExtendedVariableOrder stype{"stype", {"store_nbr"}, true};
+
+    city.addChild(stores);
+    state.addChild(city);
+    cluster.addChild(state);
+    stype.addChild(cluster);
+    cur.addChild(stype);
+  }
+
+  cur.addChild(createFavorita(trainOrder, index + 1));
+
+  if (index == 0) {
+    ExtendedVariableOrder t{"t"};
+    t.addChild(cur);
+
+    return t;
+  }
+  return cur;
+}
+
 ExtendedVariableOrder createFavorita() {
   ExtendedVariableOrder t{"t"};
 
   ExtendedVariableOrder items{"items", {"item_nbr", "family", "class", "perishable"}};
-  ExtendedVariableOrder family{"family", {"item_nbr", "class", "perishable"}, true};
-  ExtendedVariableOrder clas{"class", {"item_nbr", "perishable"}};
+  ExtendedVariableOrder clas{"class", {"item_nbr", "family", "perishable"}};
+  ExtendedVariableOrder family{"family", {"item_nbr", "perishable"}, true};
   ExtendedVariableOrder perishable{"perishable", {"item_nbr"}};
-  ExtendedVariableOrder item_nbr{"item_nbr", {"date", "store_nbr"}};
+  ExtendedVariableOrder item_nbr{"item_nbr", {"date", "store_nbr", "onpromotion"}};
 
   ExtendedVariableOrder holidays_events{
       "holidays_events_conv", {"date", "type", "locale", "locale_name", "description", "transferred"}};
-  ExtendedVariableOrder type{"type", {"date", "locale", "locale_name", "description", "transferred"}, true};
-  ExtendedVariableOrder locale{"locale", {"date", "locale_name", "description", "transferred"}, true};
-  ExtendedVariableOrder locale_name{"locale_name", {"date", "description", "transferred"}, true};
-  ExtendedVariableOrder description{"description", {"date", "transferred"}, true};
+  ExtendedVariableOrder description{
+      "description", {"date", "type", "locale", "locale_name", "transferred"}, true};
+  ExtendedVariableOrder locale_name{"locale_name", {"date", "type", "locale", "transferred"}, true};
+  ExtendedVariableOrder type{"type", {"date", "locale", "transferred"}, true};
+  ExtendedVariableOrder locale{"locale", {"date", "transferred"}, true};
   ExtendedVariableOrder transferred{"transferred", {"date"}, true};
-  ExtendedVariableOrder date{"date", {"store_nbr"}};
+  ExtendedVariableOrder date{"date", {"store_nbr", "onpromotion"}};
 
   ExtendedVariableOrder oil{"oil_conv", {"date", "dcoilwtico"}};
   ExtendedVariableOrder dcoilwtico{"dcoilwtico", {"date"}};
 
   ExtendedVariableOrder transactions{"transactions_conv", {"date", "store_nbr", "txns"}};
   ExtendedVariableOrder txns{"txns", {"date", "store_nbr"}};
-  ExtendedVariableOrder store_nbr{"store_nbr"};
+  ExtendedVariableOrder store_nbr{"store_nbr", {"onpromotion"}};
 
   ExtendedVariableOrder stores{"stores", {"store_nbr", "city", "state", "stype", "cluster"}};
   ExtendedVariableOrder city{"city", {"store_nbr", "state", "stype", "cluster"}, true};
   ExtendedVariableOrder state{"state", {"store_nbr", "stype", "cluster"}, true};
-  ExtendedVariableOrder stype{"stype", {"store_nbr", "cluster"}, true};
-  ExtendedVariableOrder cluster{"cluster", {"store_nbr"}};
+  ExtendedVariableOrder cluster{"cluster", {"stype", "store_nbr"}};
+  ExtendedVariableOrder stype{"stype", {"store_nbr"}, true};
 
-  ExtendedVariableOrder train{"train_conv",
+  ExtendedVariableOrder train{"train_conv_small",
                               {"id", "date", "store_nbr", "item_nbr", "unit_sales", "onpromotion"}};
-  ExtendedVariableOrder onpromotion{"onpromotion", {"id", "date", "store_nbr", "item_nbr", "unit_sales"}};
-  ExtendedVariableOrder unit_sales{"unit_sales", {"id", "date", "store_nbr", "item_nbr"}};
-  ExtendedVariableOrder id{"id", {"date", "store_nbr", "item_nbr"}};
+  ExtendedVariableOrder id{"id", {"date", "store_nbr", "item_nbr", "unit_sales", "onpromotion"}};
+  ExtendedVariableOrder unit_sales{"unit_sales", {"date", "store_nbr", "item_nbr", "onpromotion"}};
+  ExtendedVariableOrder onpromotion{"onpromotion"};
 
   city.addChild(stores);
   state.addChild(city);
-  stype.addChild(state);
-  cluster.addChild(stype);
-  store_nbr.addChild(cluster);
+  cluster.addChild(state);
+  stype.addChild(cluster);
+  store_nbr.addChild(stype);
 
   txns.addChild(transactions);
   date.addChild(txns);
@@ -98,26 +189,28 @@ ExtendedVariableOrder createFavorita() {
   dcoilwtico.addChild(oil);
   date.addChild(dcoilwtico);
 
-  onpromotion.addChild(train);
-  unit_sales.addChild(onpromotion);
-  id.addChild(unit_sales);
-  item_nbr.addChild(id);
+  id.addChild(train);
+  unit_sales.addChild(id);
+  // onpromotion.addChild(unit_sales);
+  item_nbr.addChild(unit_sales);
 
-  family.addChild(items);
-  clas.addChild(family);
-  perishable.addChild(clas);
+  clas.addChild(items);
+  family.addChild(clas);
+  perishable.addChild(family);
   item_nbr.addChild(perishable);
   date.addChild(item_nbr);
 
-  type.addChild(holidays_events);
+  description.addChild(holidays_events);
+  locale_name.addChild(description);
+  type.addChild(locale_name);
   locale.addChild(type);
-  locale_name.addChild(locale);
-  description.addChild(locale_name);
-  transferred.addChild(description);
+  transferred.addChild(locale);
   date.addChild(transferred);
   store_nbr.addChild(date);
 
-  t.addChild(store_nbr);
+  onpromotion.addChild(store_nbr);
+
+  t.addChild(onpromotion);
 
   return t;
 }
@@ -151,6 +244,7 @@ void dropAll(pqxx::connection& c, const ExtendedVariableOrder& root) {
   for (const auto& x : root.getChildren()) {
     dropAll(w, x);
   }
+  w.exec("DROP TABLE IF EXISTS Q" + root.getName() + " CASCADE;");
   w.commit();
 }
 
@@ -218,8 +312,7 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
    DROP TABLE IF EXISTS Competition CASCADE;");
 
   // and recreate
-  w.exec(
-      "CREATE TABLE Competition(Location integer NOT NULL, Competitor integer NOT NULL);");
+  w.exec("CREATE TABLE Competition(Location integer NOT NULL, Competitor integer NOT NULL);");
   w.exec("CREATE TABLE Branch(Location integer NOT NULL, Product varchar(30) NOT NULL, Inventory integer NOT "
          "NULL);");
   w.exec("CREATE TABLE Sales(Product varchar(30) NOT NULL, Sale integer NOT NULL);");
@@ -444,13 +537,69 @@ void testRandom() {
   }
 }
 
+std::string stringOfVector(const std::vector<std::string>& array) {
+  std::string out{"[ "};
+
+  for (const auto& elem : array) {
+    out += elem + " | ";
+  }
+
+  // remove trailing " | "
+  if (out.size() > 2) {
+    out.erase(out.size() - 3, 3);
+  }
+
+  out += " ]";
+  return out;
+}
+
+void compareVarOrder(const ExtendedVariableOrder& root1, const ExtendedVariableOrder& root2) {
+  std::cout << root1.getName() << " = " << root2.getName() << '\n';
+  std::cout << root1.isLeaf() << " = " << root2.isLeaf() << '\n';
+  assert(root1.getName() == root2.getName());
+  assert(root1.isLeaf() == root2.isLeaf());
+
+  std::cout << stringOfVector(root1.getKey()) << '\n';
+  std::cout << stringOfVector(root2.getKey()) << '\n';
+
+  std::cout << '\n';
+
+  for (const ExtendedVariableOrder& x : root1.getChildren()) {
+    bool found = false;
+    for (const ExtendedVariableOrder& y : root2.getChildren()) {
+      if (x.getName() != y.getName()) {
+        continue;
+      }
+      compareVarOrder(x, y);
+      found = true;
+    }
+
+    if (!found) {
+      std::cout << root2.getName() << " is missing " << x.getName() << '\n';
+      assert(false);
+    }
+  }
+
+  if (root1.getChildren().size() != root2.getChildren().size()) {
+    std::cout << root1.getName() << " is missing something \n";
+    assert(false);
+  }
+}
+
 void testFavorita() {
-  ExtendedVariableOrder varOrder{createFavorita()};
+  // ExtendedVariableOrder varOrder1{createFavorita()};
+  std::vector<std::string> trainOrder{"onpromotion", "item_nbr", "unit_sales", "id", "store_nbr", "date"};
+  ExtendedVariableOrder varOrder{createFavorita(trainOrder)};
+  // ExtendedVariableOrder varOrder{createTrain(trainOrder)};
   // printVarOrder(varOrder);
-  // std::cout << '\n';
+  // std::cout << std::endl;
+
+  // compareVarOrder(varOrder1, varOrder);
+  // std::cout << std::endl;
+  // assert(false);
 
   try {
-    pqxx::connection c{"dbname=Favorita hostaddr=127.0.0.1 port=5433"};
+    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 
@@ -476,15 +625,103 @@ void testFavorita() {
   }
 }
 
+void testMadlib() {
+  try {
+    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    if (c.is_open()) {
+      std::cout << "Connected to: " << c.dbname() << '\n';
+
+      pqxx::work transaction{c};
+
+      transaction.exec("DROP VIEW IF EXISTS madlibView;");
+
+      transaction.exec("CREATE VIEW madlibView AS ("
+                       "SELECT*"
+                       "FROM train_conv NATURAL JOIN items NATURAL JOIN holidays_events_conv NATURAL JOIN "
+                       "oil_conv NATURAL JOIN stores NATURAL JOIN transactions_conv);");
+
+      transaction.exec("SELECT linregr_train( 'madlibView',"
+                       "'madlib_linregr',"
+                       "'unit_sales',"
+                       " 'ARRAY[1, id, date, store_nbr, item_nbr, onpromotion]' "
+                       ");");
+
+      transaction.commit();
+
+      c.disconnect();
+    } else {
+      std::cout << "Failed to connect!\n";
+    }
+
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
+}
+
+void computeJoin() {
+  try {
+    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    if (c.is_open()) {
+      std::cout << "Connected to: " << c.dbname() << '\n';
+
+      pqxx::nontransaction transaction{c};
+
+      transaction.exec("CREATE TABLE complete_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN items NATURAL JOIN holidays_events_conv NATURAL JOIN "
+                       "oil_conv NATURAL JOIN stores NATURAL JOIN transactions_conv);");
+
+      transaction.exec("CREATE TABLE item_date_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN items NATURAL JOIN holidays_events_conv NATURAL JOIN "
+                       "oil_conv NATURAL JOIN transactions_conv);");
+
+      transaction.exec(
+          "CREATE TABLE item_store_join AS ("
+          "SELECT *"
+          "FROM train_conv NATURAL JOIN items NATURAL JOIN stores NATURAL JOIN transactions_conv);");
+
+      transaction.exec("CREATE TABLE date_store_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN holidays_events_conv NATURAL JOIN "
+                       "oil_conv NATURAL JOIN stores NATURAL JOIN transactions_conv);");
+
+      transaction.exec("CREATE TABLE item_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN items);");
+
+      transaction.exec("CREATE TABLE date_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN holidays_events_conv NATURAL JOIN "
+                       "oil_conv NATURAL JOIN transactions_conv);");
+
+      transaction.exec("CREATE TABLE store_join AS ("
+                       "SELECT *"
+                       "FROM train_conv NATURAL JOIN stores NATURAL JOIN transactions_conv);");
+
+      transaction.commit();
+
+      c.disconnect();
+    } else {
+      std::cout << "Failed to connect!\n";
+    }
+
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
+}
+
 int main() {
   // std::cout << std::boolalpha;
 
+  // computeJoin();
+  // testMadlib();
   // testSales();
 
   // std::cout << "\n\n";
-  // testFavorita();
+  testFavorita();
 
-  testRandom();
+  // testRandom();
 
   return 0;
 }

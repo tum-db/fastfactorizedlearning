@@ -22,4 +22,8 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
                                      const std::vector<std::string>& relevantColumns, pqxx::connection& c,
                                      double& avg);
 
+std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
+                                    const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                    double& avg);
+
 #endif
