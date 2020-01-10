@@ -69,7 +69,7 @@ ExtendedVariableOrder createTrain(const std::vector<std::string>& trainOrder, co
 
 ExtendedVariableOrder createFavorita(const std::vector<std::string>& trainOrder, const size_t index = 0) {
   if (index == trainOrder.size()) {
-    return {"train_conv_small", trainOrder};
+    return {"train_conv", trainOrder};
   }
 
   ExtendedVariableOrder cur{trainOrder.at(index),
@@ -229,7 +229,7 @@ void dropAll(pqxx::work& w, const ExtendedVariableOrder& root) {
   if (root.isLeaf()) {
     // DROP tables created by feature scaling
     w.exec("DROP TABLE IF EXISTS " + root.getName() + "_conv_type CASCADE;");
-    w.exec("DROP TABLE IF EXISTS " + root.getName() + "_conv CASCADE;");
+    w.exec("DROP VIEW IF EXISTS " + root.getName() + "_conv CASCADE;");
     w.exec("DROP VIEW IF EXISTS Q" + root.getName() + "_conv CASCADE;");
 
   } else {
@@ -588,7 +588,7 @@ void compareVarOrder(const ExtendedVariableOrder& root1, const ExtendedVariableO
 
 void testFavorita() {
   // ExtendedVariableOrder varOrder1{createFavorita()};
-  std::vector<std::string> trainOrder{"onpromotion", "item_nbr", "unit_sales", "id", "store_nbr", "date"};
+  std::vector<std::string> trainOrder{"onpromotion", "item_nbr", "unit_sales", "store_nbr", "date"};
   ExtendedVariableOrder varOrder{createFavorita(trainOrder)};
   // ExtendedVariableOrder varOrder{createTrain(trainOrder)};
   // printVarOrder(varOrder);
@@ -606,11 +606,12 @@ void testFavorita() {
       dropAll(c, varOrder);
       std::cout << "Dropped all tables and views.\n";
 
-      std::vector<std::string> relevantColumns{"unit_sales", "id",          "date", "store_nbr",
+      std::vector<std::string> relevantColumns{"unit_sales", "date",        "store_nbr",
                                                "item_nbr",   "onpromotion", "T"};
       double avg;
 
       std::vector<double> theta{linearRegression(varOrder, relevantColumns, c, avg)};
+      // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, c, avg)};
       std::cout << "Linear regression complete.\n";
       std::cout << stringOfVector(theta) << '\n';
       assert(theta.size() == relevantColumns.size());

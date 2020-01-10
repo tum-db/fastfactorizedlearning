@@ -116,7 +116,7 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     const sql orig{leaves.at(i)->getName()};
     leaves.at(i)->convertName({});
     // CREATE converted table
-    sql query{"CREATE TABLE " + leaves.at(i)->getName() + " AS SELECT "};
+    sql query{"CREATE VIEW " + leaves.at(i)->getName() + " AS SELECT "};
 
     const std::vector<std::string>& keys{leaves.at(i)->getKey()};
     assert(keys.size() >= convertCols.at(i).size());
@@ -159,7 +159,7 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Figure 5)
  * URL: https://doi.org/10.14778/3007263.3007312
  **/
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::nontransaction& transaction) {
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction) {
   const sql& name{varOrder.getName()};
   if (varOrder.isLeaf()) {
     transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50)," + name +
@@ -246,7 +246,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::nontransaction& t
       cat = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
     }
 
-    transaction.exec("CREATE TABLE Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
+    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
                      "_lineage, " + deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " +
                      join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " +
                      cat + key + lineage + ", " + deg + ");\n");
@@ -254,7 +254,7 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::nontransaction& t
 }
 
 void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
-  pqxx::nontransaction transaction{c};
+  pqxx::work transaction{c};
   // special case for root/intercept to avoid redundancy and allow simpler varOrders
   const sql& name{varOrder.getName()};
   const int d = 1; // linear
@@ -390,7 +390,7 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
 
   // repeat until error is sufficiently small
   const double eps{1e-6};
-  const double abortAlpha{1e-10};
+  const double abortAlpha{1e-15};
   bool notExact{true};
 
   std::vector<double> epsilon(n, INFINITY);
@@ -528,13 +528,10 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pq
 
       sql epsilonQuery{"SELECT SUM(("};
 
-      for (size_t k{0}; k < n; ++k) {
-        if (k > 0) {
-          epsilonQuery += " + ";
-        }
-        epsilonQuery += std::to_string(theta.at(k)) + "*" + relevantColumns.at(k);
+      for (size_t k{0}; k < n - 1; ++k) {
+        epsilonQuery += std::to_string(theta.at(k)) + "*" + relevantColumns.at(k) + " + ";
       }
-      epsilonQuery += ")*" + relevantColumns.at(j) + ") FROM joinView";
+      epsilonQuery += std::to_string(theta.back()) + ")*" + ((j==n-1) ? "1" : relevantColumns.at(j)) + ") FROM joinView";
 
       // execute the Query
       pqxx::nontransaction transaction{c};
