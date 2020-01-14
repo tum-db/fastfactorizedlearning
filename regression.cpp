@@ -21,7 +21,7 @@ typedef std::string sql;
  * both of them should be included in leaves
  **/
 std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
-                                        std::vector<ExtendedVariableOrder*>& leaves, pqxx::connection& c) {
+                                        std::vector<ExtendedVariableOrder*>& leaves, const std::string& con) {
   size_t n{relevantColumns.size() - 1};
   assert(n > 2);
 
@@ -54,12 +54,12 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     }
   }
 
-  pqxx::work transaction{c};
-  std::vector<scaleFactors> aggregates;
-  aggregates.reserve(n + 1);
+  std::vector<scaleFactors> aggregates(n, {0, 1});
+  // aggregates.reserve(n + 1);
 
+#pragma omp parallel for
   // compute the required aggregates
-  for (size_t i{0}; i < n; ++i) {
+  for (size_t i = 0; i < n; ++i) {
     const sql& column{relevantColumns.at(i)};
 
     sql query{""};
@@ -77,23 +77,30 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     const sql select{"SELECT AVG(" + column + ") as avg, MAX(ABS(" + column +
                      ")) AS max FROM unionOfAllTables;"};
 
+    pqxx::connection c{con};
+    pqxx::work transaction{c};
     auto res{transaction.exec(query + select)};
+    transaction.commit();
+    c.disconnect();
     assert(res.size() == 1);
     assert(res[0].size() == 2);
 
     // don't scale if no value is distinct from null
-    if (res[0][0].is_null()) {
-      aggregates.push_back({0, 1});
-    } else {
-      aggregates.push_back({res[0][0].as<double>(), res[0][1].as<double>()});
+    if (!res[0][0].is_null()) {
+      //   aggregates.push_back({0, 1});
+      // } else {
+      aggregates.at(i) = {res[0][0].as<double>(), res[0][1].as<double>()};
     }
 
     // don't scale if it's already good
     if (aggregates.at(i).max == 0. || (aggregates.at(i).max < 5 && aggregates.at(i).max > 0.1)) {
       aggregates.at(i) = {0., 1.};
-      for (const size_t j : relevantTables.at(i)) {
-        convertCols.at(j).erase(std::remove(convertCols.at(j).begin(), convertCols.at(j).end(), i),
-                                convertCols.at(j).end());
+#pragma omp critical
+      {
+        for (const size_t j : relevantTables.at(i)) {
+          convertCols.at(j).erase(std::remove(convertCols.at(j).begin(), convertCols.at(j).end(), i),
+                                  convertCols.at(j).end());
+        }
       }
 
       // } else {
@@ -107,8 +114,11 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     }
   }
 
+  // std::cout << "Scaling: Found out values." << std::endl;
+
+#pragma omp parallel for
   // compute new tables if necessary
-  for (size_t i{0}; i < leaves.size(); ++i) {
+  for (size_t i = 0; i < leaves.size(); ++i) {
     if (convertCols.at(i).size() == 0) {
       continue;
     }
@@ -147,10 +157,14 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
       }
     }
 
+    pqxx::connection c{con};
+    pqxx::work transaction{c};
     transaction.exec(query + " FROM " + orig);
+    transaction.commit();
+    c.disconnect();
   }
 
-  transaction.commit();
+  // std::cout << "Scaling: Computed new tables." << std::endl;
 
   return aggregates;
 }
@@ -405,9 +419,10 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
     notExact = false;
 
     // compute new epsilon for all features
-    for (size_t j{1}; j < n; ++j) {
+    for (size_t j = 1; j < n; ++j) {
       double epsilonNew{0.};
-      for (size_t k{0}; k < n; ++k) {
+      //#pragma omp parallel for
+      for (size_t k = 0; k < n; ++k) {
         epsilonNew += theta.at(k) * cofactorMatrix.at(k).at(j);
       }
 
@@ -441,7 +456,8 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       break;
     }
 
-    for (size_t j{1}; j < n; ++j) {
+    // #pragma omp parallel for
+    for (size_t j = 1; j < n; ++j) {
       theta.at(j) -= epsilon.at(j);
     }
   }
@@ -461,14 +477,15 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
  *
  */
 std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
-                                     const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                     const std::vector<std::string>& relevantColumns, const std::string& con,
                                      double& avg) {
   std::vector<ExtendedVariableOrder*> leaves;
   varOrder.findLeaves(leaves);
 
-  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, c)};
-  // std::cout << "Feature Scaling complete\n";
+  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, con)};
+  // std::cout << "Feature Scaling complete." << std::endl;
 
+  pqxx::connection c{con};
   factorizeSQL(varOrder, c);
   // std::cout << "Creation of tables and views complete.\n\n";
 
@@ -494,10 +511,12 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
 
   avg = scaleAggs.front().avg;
 
+  // std::cout.flags(oldSettings);
+
   return theta;
 }
 
-std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pqxx::connection& c) {
+std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, const sql& con) {
   const size_t n{relevantColumns.size()};
 
   // start with some initial value
@@ -511,31 +530,37 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pq
 
   // repeat until error is sufficiently small
   const double eps{1e-6};
-  const double abortAlpha{1e-10};
+  const double abortAlpha{1e-15};
   bool notExact{true};
 
   std::vector<double> epsilon(n, INFINITY);
   int i{0};
   while (notExact) {
+    // if (i % 100 == 0)
+    //   std::cerr << "Iteration nr. " << i << std::endl;
     if (++i > 100000000) {
       std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
       break;
     }
     notExact = false;
 
+#pragma omp parallel for
     // compute new epsilon for all features
-    for (size_t j{1}; j < n; ++j) {
-
+    for (size_t j = 1; j < n; ++j) {
       sql epsilonQuery{"SELECT SUM(("};
 
       for (size_t k{0}; k < n - 1; ++k) {
-        epsilonQuery += std::to_string(theta.at(k)) + "*" + relevantColumns.at(k) + " + ";
+        epsilonQuery += std::to_string(theta.at(k)) + "*COALESCE(" + relevantColumns.at(k) + ",0) + ";
       }
-      epsilonQuery += std::to_string(theta.back()) + ")*" + ((j==n-1) ? "1" : relevantColumns.at(j)) + ") FROM joinView";
+      epsilonQuery += std::to_string(theta.back()) + ")*" +
+                      ((j == n - 1) ? "1" : ("COALESCE(" + relevantColumns.at(j) + ",0)")) +
+                      ") FROM joinView";
 
       // execute the Query
+      pqxx::connection c{con};
       pqxx::nontransaction transaction{c};
       auto res{transaction.exec(epsilonQuery)};
+      c.disconnect();
       assert(res.size() == 1);
       assert(res[0].size() == 1);
       double epsilonNew{res[0][0].as<double>()};
@@ -543,23 +568,27 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pq
       // using ridge regularization term derived by theta_j
       epsilonNew += lambda * 2 * theta.at(j);
 
-      epsilonNew *= alpha;
+      // epsilonNew *= alpha;
 
       // not exact enough
-      if (std::fabs(epsilonNew) > eps) {
+      if (std::fabs(epsilonNew * alpha) > eps) {
         notExact = true;
 
-        // alpha needs adjusting
-        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e4) {
-          alpha /= 3;
-          epsilonNew /= 3;
-          if (alpha < abortAlpha) {
-            break;
+#pragma omp critical
+        {
+          // alpha needs adjusting
+          if (std::fabs(epsilonNew * alpha / 2) >= std::fabs(epsilon.at(j)) ||
+              std::fabs(epsilonNew * alpha) > 1e4) {
+            alpha /= 3;
+            // epsilonNew /= 3;
+            // if (alpha < abortAlpha) {
+            //   break;
+            // }
           }
         }
       }
 
-      epsilon.at(j) = epsilonNew;
+      epsilon.at(j) = epsilonNew * alpha;
     }
 
     if (alpha < abortAlpha) {
@@ -567,8 +596,9 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pq
       break;
     }
 
+    //#pragma omp parallel for
     // update theta
-    for (size_t j{1}; j < n; ++j) {
+    for (size_t j = 1; j < n; ++j) {
       theta.at(j) -= epsilon.at(j);
     }
   }
@@ -579,19 +609,20 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, pq
 }
 
 std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
-                                    const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                    const std::vector<std::string>& relevantColumns, const sql& con,
                                     double& avg) {
   std::vector<ExtendedVariableOrder*> leaves;
   varOrder.findLeaves(leaves);
 
-  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, c)};
-  // std::cout << "Feature Scaling complete\n";
+  std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, con)};
+  // std::cout << "Feature Scaling complete." << std::endl;
 
+  pqxx::connection c{con};
   pqxx::work transaction{c};
 
-  transaction.exec("DROP VIEW IF EXISTS joinView;");
+  transaction.exec("DROP TABLE IF EXISTS joinView;");
 
-  sql join{"CREATE VIEW joinView AS (SELECT* FROM "};
+  sql join{"CREATE TABLE joinView AS (SELECT* FROM "};
 
   bool first{true};
   for (const auto leaf : leaves) {
@@ -605,8 +636,9 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
 
   transaction.exec(join + ")");
   transaction.commit();
+  c.disconnect();
 
-  std::vector<double> theta{naiveBGD(relevantColumns, c)};
+  std::vector<double> theta{naiveBGD(relevantColumns, con)};
   // std::cout << stringOfVector(theta) << '\n';
 
   // for the constant term
@@ -614,7 +646,8 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
 
   // scale result
   assert(theta.size() == scaleAggs.size() + 1);
-  for (size_t i{1}; i < scaleAggs.size(); ++i) {
+  //#pragma omp parallel for
+  for (size_t i = 1; i < scaleAggs.size(); ++i) {
     theta.at(i) /= scaleAggs.at(i).max;
 
     sum += theta.at(i) * scaleAggs.at(i).avg;

@@ -35,10 +35,10 @@ class ExtendedVariableOrder {
   // restrict access of convertName without allowing access to all members
   class nameKey {
    private:
-    nameKey() {}
+    nameKey(){};
     friend std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
                                                    std::vector<ExtendedVariableOrder*>& leaves,
-                                                   pqxx::connection& c);
+                                                   const std::string& con);
   };
 
   void convertName(nameKey);

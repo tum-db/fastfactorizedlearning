@@ -8,6 +8,9 @@
 #include "variableOrder.h"
 #include "regression.h"
 
+const std::string g_favorita{"dbname=Favorita hostaddr=127.0.0.1 port=5433"};
+const std::string g_sales{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+
 ExtendedVariableOrder testCreate() {
   ExtendedVariableOrder root{"C"};
   ExtendedVariableOrder a{"A"};
@@ -239,13 +242,15 @@ void dropAll(pqxx::work& w, const ExtendedVariableOrder& root) {
   }
 }
 
-void dropAll(pqxx::connection& c, const ExtendedVariableOrder& root) {
+void dropAll(const std::string& con, const ExtendedVariableOrder& root) {
+  pqxx::connection c{con};
   pqxx::work w{c};
   for (const auto& x : root.getChildren()) {
     dropAll(w, x);
   }
   w.exec("DROP TABLE IF EXISTS Q" + root.getName() + " CASCADE;");
   w.commit();
+  c.disconnect();
 }
 
 std::string stringOfVector(const std::vector<double>& array) {
@@ -275,29 +280,21 @@ double testResult(const std::vector<double>& theta, const std::vector<int>& x) {
 
 void testSales() {
   ExtendedVariableOrder varOrder{createSales()};
-  printVarOrder(varOrder);
-  std::cout << '\n';
+  // printVarOrder(varOrder);
+  // std::cout << '\n';
 
   try {
-    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
-    if (c.is_open()) {
-      std::cout << "Connected to: " << c.dbname() << '\n';
+    dropAll(g_sales, varOrder);
+    std::cout << "Dropped all tables and views." << std::endl;
 
-      dropAll(c, varOrder);
-      std::cout << "Dropped all tables and views.\n";
+    std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
+    double avg;
 
-      std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
-      double avg;
+    std::vector<double> theta{linearRegression(varOrder, relevantColumns, g_sales, avg)};
+    // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, g_sales, avg)};
+    std::cout << stringOfVector(theta) << '\n';
 
-      std::vector<double> theta{linearRegression(varOrder, relevantColumns, c, avg)};
-      std::cout << stringOfVector(theta) << '\n';
-
-      assert(theta.size() == relevantColumns.size());
-
-      c.disconnect();
-    } else {
-      std::cout << "Failed to connect!\n";
-    }
+    assert(theta.size() == relevantColumns.size());
 
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
@@ -399,7 +396,7 @@ std::vector<double> createRandomSales(pqxx::connection& c) {
 
 void testRandom() {
   try {
-    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    pqxx::connection c{g_sales};
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 
@@ -425,12 +422,13 @@ void testRandom() {
         // printVarOrder(varOrder);
         // std::cout << '\n';
 
-        dropAll(c, varOrder);
-        // std::cout << "Dropped all tables and views.\n";
+        dropAll(g_sales, varOrder);
+        // std::cout << "Dropped all tables and views."<<std::endl;
 
         std::vector<std::string> relevantColumns{"Inventory", "Competitor", "Sale", "T"};
 
-        std::vector<double> theta = linearRegression(varOrder, relevantColumns, c, avg);
+        std::vector<double> theta = linearRegression(varOrder, relevantColumns, g_sales, avg);
+        // std::vector<double> theta = naiveRegression(varOrder, relevantColumns, g_sales, avg);
         // std::cout << stringOfVector(theta) << '\n';
 
         assert(theta.size() == realTheta.size() + 1);
@@ -599,27 +597,18 @@ void testFavorita() {
   // assert(false);
 
   try {
-    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
-    if (c.is_open()) {
-      std::cout << "Connected to: " << c.dbname() << '\n';
+    dropAll(g_favorita, varOrder);
+    std::cout << "Dropped all tables and views." << std::endl;
 
-      dropAll(c, varOrder);
-      std::cout << "Dropped all tables and views.\n";
+    std::vector<std::string> relevantColumns{"unit_sales", "date",        "store_nbr",
+                                             "item_nbr",   "onpromotion", "T"};
+    double avg;
 
-      std::vector<std::string> relevantColumns{"unit_sales", "date",        "store_nbr",
-                                               "item_nbr",   "onpromotion", "T"};
-      double avg;
-
-      std::vector<double> theta{linearRegression(varOrder, relevantColumns, c, avg)};
-      // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, c, avg)};
-      std::cout << "Linear regression complete.\n";
-      std::cout << stringOfVector(theta) << '\n';
-      assert(theta.size() == relevantColumns.size());
-
-      c.disconnect();
-    } else {
-      std::cout << "Failed to connect!\n";
-    }
+    std::vector<double> theta{linearRegression(varOrder, relevantColumns, g_favorita, avg)};
+    // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, g_favorita, avg)};
+    std::cout << "Linear regression complete.\n";
+    std::cout << stringOfVector(theta) << '\n';
+    assert(theta.size() == relevantColumns.size());
 
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
@@ -628,13 +617,14 @@ void testFavorita() {
 
 void testMadlib() {
   try {
-    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    pqxx::connection c{g_favorita};
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 
       pqxx::work transaction{c};
 
       transaction.exec("DROP VIEW IF EXISTS madlibView;");
+      transaction.exec("DROP TABLE IF EXISTS madlib_linregr;");
 
       transaction.exec("CREATE VIEW madlibView AS ("
                        "SELECT*"
@@ -644,7 +634,7 @@ void testMadlib() {
       transaction.exec("SELECT linregr_train( 'madlibView',"
                        "'madlib_linregr',"
                        "'unit_sales',"
-                       " 'ARRAY[1, id, date, store_nbr, item_nbr, onpromotion]' "
+                       " 'ARRAY[1, date, store_nbr, item_nbr, onpromotion]' "
                        ");");
 
       transaction.commit();
@@ -661,7 +651,7 @@ void testMadlib() {
 
 void computeJoin() {
   try {
-    pqxx::connection c{"dbname=SalesWithNumbers hostaddr=127.0.0.1 port=5433"};
+    pqxx::connection c{g_favorita};
     if (c.is_open()) {
       std::cout << "Connected to: " << c.dbname() << '\n';
 

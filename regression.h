@@ -9,7 +9,7 @@
 // typedef std::string sql;
 
 std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
-                                        std::vector<ExtendedVariableOrder*>& leaves, pqxx::connection& c);
+                                        std::vector<ExtendedVariableOrder*>& leaves, const std::string& con);
 
 void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c);
 // void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
@@ -19,11 +19,11 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
                                          pqxx::connection& c);
 
 std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
-                                     const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                     const std::vector<std::string>& relevantColumns, const std::string& con,
                                      double& avg);
 
 std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
-                                    const std::vector<std::string>& relevantColumns, pqxx::connection& c,
+                                    const std::vector<std::string>& relevantColumns, const std::string& con,
                                     double& avg);
 
 #endif
