@@ -219,7 +219,7 @@ ExtendedVariableOrder createFavorita() {
 }
 
 void printVarOrder(const ExtendedVariableOrder& root) {
-  std::cout << root.getName() << ' ' << root.isLeaf() << '\n';
+  std::cout << root.getName() << ' ' << root.isLeaf() << std::endl;
   for (const ExtendedVariableOrder& x : root.getChildren()) {
     printVarOrder(x);
   }
@@ -281,7 +281,7 @@ double testResult(const std::vector<double>& theta, const std::vector<int>& x) {
 void testSales() {
   ExtendedVariableOrder varOrder{createSales()};
   // printVarOrder(varOrder);
-  // std::cout << '\n';
+  // std::cout << std::endl;
 
   try {
     dropAll(g_sales, varOrder);
@@ -292,12 +292,12 @@ void testSales() {
 
     std::vector<double> theta{linearRegression(varOrder, relevantColumns, g_sales, avg)};
     // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, g_sales, avg)};
-    std::cout << stringOfVector(theta) << '\n';
+    std::cout << stringOfVector(theta) << std::endl;
 
     assert(theta.size() == relevantColumns.size());
 
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << e.what() << std::endl;
   }
 }
 
@@ -398,7 +398,7 @@ void testRandom() {
   try {
     pqxx::connection c{g_sales};
     if (c.is_open()) {
-      std::cout << "Connected to: " << c.dbname() << '\n';
+      std::cout << "Connected to: " << c.dbname() << std::endl;
 
       bool stop{false};
 
@@ -415,12 +415,12 @@ void testRandom() {
       size_t testCase{0};
       for (; testCase < 1000 && !stop; ++testCase) {
         std::vector<double> realTheta{createRandomSales(c)};
-        // std::cout << stringOfVector(realTheta) << '\n';
+        // std::cout << stringOfVector(realTheta) << std::endl;
 
         double avg{INFINITY};
         ExtendedVariableOrder varOrder{createSales()};
         // printVarOrder(varOrder);
-        // std::cout << '\n';
+        // std::cout << std::endl;
 
         dropAll(g_sales, varOrder);
         // std::cout << "Dropped all tables and views."<<std::endl;
@@ -429,7 +429,7 @@ void testRandom() {
 
         std::vector<double> theta = linearRegression(varOrder, relevantColumns, g_sales, avg);
         // std::vector<double> theta = naiveRegression(varOrder, relevantColumns, g_sales, avg);
-        // std::cout << stringOfVector(theta) << '\n';
+        // std::cout << stringOfVector(theta) << std::endl;
 
         assert(theta.size() == realTheta.size() + 1);
         // double sum{0.};
@@ -450,12 +450,12 @@ void testRandom() {
             totalConsError += error;
 
             if (std::fabs(error / realTheta.back()) > 0.05 && std::fabs(error / avg) > 0.01) {
-              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-              std::cout << "Relevance error: " << error << '\n';
-              std::cout << "Avg: " << avg << '\n';
-              std::cout << "Testcase nr: " << testCase << '\n';
-              std::cout << stringOfVector(theta) << '\n';
-              std::cout << stringOfVector(realTheta) << '\n';
+              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << std::endl;
+              std::cout << "Relevance error: " << error << std::endl;
+              std::cout << "Avg: " << avg << std::endl;
+              std::cout << "Testcase nr: " << testCase << std::endl;
+              std::cout << stringOfVector(theta) << std::endl;
+              std::cout << stringOfVector(realTheta) << std::endl;
               stop = true;
             }
 
@@ -473,11 +473,11 @@ void testRandom() {
             totalAbsError += error;
 
             if (error > 0.5) {
-              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-              std::cout << "Absolute error: " << error << '\n';
-              std::cout << "Testcase nr: " << testCase << '\n';
-              std::cout << stringOfVector(theta) << '\n';
-              std::cout << stringOfVector(realTheta) << '\n';
+              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << std::endl;
+              std::cout << "Absolute error: " << error << std::endl;
+              std::cout << "Testcase nr: " << testCase << std::endl;
+              std::cout << stringOfVector(theta) << std::endl;
+              std::cout << stringOfVector(realTheta) << std::endl;
               stop = true;
             }
 
@@ -495,11 +495,11 @@ void testRandom() {
             totalRelError += error;
 
             if (error > 0.05) {
-              std::cout << stringOfVector(theta) << '\n';
-              std::cout << stringOfVector(realTheta) << '\n';
-              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << '\n';
-              std::cout << "Relative error: " << error << '\n';
-              std::cout << "Testcase nr: " << testCase << '\n';
+              std::cout << stringOfVector(theta) << std::endl;
+              std::cout << stringOfVector(realTheta) << std::endl;
+              std::cout << "Got: " << theta.at(i + 1) << " but expected: " << realTheta.at(i) << std::endl;
+              std::cout << "Relative error: " << error << std::endl;
+              std::cout << "Testcase nr: " << testCase << std::endl;
               stop = true;
             }
           }
@@ -513,15 +513,15 @@ void testRandom() {
         std::cout << "All tests passed!\n";
       }
 
-      std::cout << '\n';
+      std::cout << std::endl;
       std::cout << "maxRelError: " << maxRelError << ", ";
       std::cout << "minRelError: " << minRelError << ", ";
       std::cout << "avgRelError: " << totalRelError / testCase << ", ";
-      std::cout << '\n';
+      std::cout << std::endl;
       std::cout << "maxAbsError: " << maxAbsError << ", ";
       std::cout << "minAbsError: " << minAbsError << ", ";
       std::cout << "avgAbsError: " << totalAbsError / testCase << ", ";
-      std::cout << '\n';
+      std::cout << std::endl;
       std::cout << "maxConsError: " << maxConsError << ", ";
       std::cout << "minConsError: " << minConsError << ", ";
       std::cout << "avgConsError: " << totalConsError / testCase << "\n";
@@ -530,7 +530,7 @@ void testRandom() {
       std::cout << "Failed to connect!\n";
     }
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << e.what() << std::endl;
     exit(1);
   }
 }
@@ -552,15 +552,15 @@ std::string stringOfVector(const std::vector<std::string>& array) {
 }
 
 void compareVarOrder(const ExtendedVariableOrder& root1, const ExtendedVariableOrder& root2) {
-  std::cout << root1.getName() << " = " << root2.getName() << '\n';
-  std::cout << root1.isLeaf() << " = " << root2.isLeaf() << '\n';
+  std::cout << root1.getName() << " = " << root2.getName() << std::endl;
+  std::cout << root1.isLeaf() << " = " << root2.isLeaf() << std::endl;
   assert(root1.getName() == root2.getName());
   assert(root1.isLeaf() == root2.isLeaf());
 
-  std::cout << stringOfVector(root1.getKey()) << '\n';
-  std::cout << stringOfVector(root2.getKey()) << '\n';
+  std::cout << stringOfVector(root1.getKey()) << std::endl;
+  std::cout << stringOfVector(root2.getKey()) << std::endl;
 
-  std::cout << '\n';
+  std::cout << std::endl;
 
   for (const ExtendedVariableOrder& x : root1.getChildren()) {
     bool found = false;
@@ -573,7 +573,7 @@ void compareVarOrder(const ExtendedVariableOrder& root1, const ExtendedVariableO
     }
 
     if (!found) {
-      std::cout << root2.getName() << " is missing " << x.getName() << '\n';
+      std::cout << root2.getName() << " is missing " << x.getName() << std::endl;
       assert(false);
     }
   }
@@ -607,11 +607,11 @@ void testFavorita() {
     std::vector<double> theta{linearRegression(varOrder, relevantColumns, g_favorita, avg)};
     // std::vector<double> theta{naiveRegression(varOrder, relevantColumns, g_favorita, avg)};
     std::cout << "Linear regression complete.\n";
-    std::cout << stringOfVector(theta) << '\n';
+    std::cout << stringOfVector(theta) << std::endl;
     assert(theta.size() == relevantColumns.size());
 
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << e.what() << std::endl;
   }
 }
 
@@ -619,7 +619,7 @@ void testMadlib() {
   try {
     pqxx::connection c{g_favorita};
     if (c.is_open()) {
-      std::cout << "Connected to: " << c.dbname() << '\n';
+      std::cout << "Connected to: " << c.dbname() << std::endl;
 
       pqxx::work transaction{c};
 
@@ -645,7 +645,7 @@ void testMadlib() {
     }
 
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << e.what() << std::endl;
   }
 }
 
@@ -653,7 +653,7 @@ void computeJoin() {
   try {
     pqxx::connection c{g_favorita};
     if (c.is_open()) {
-      std::cout << "Connected to: " << c.dbname() << '\n';
+      std::cout << "Connected to: " << c.dbname() << std::endl;
 
       pqxx::nontransaction transaction{c};
 
@@ -698,7 +698,7 @@ void computeJoin() {
     }
 
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << e.what() << std::endl;
   }
 }
 

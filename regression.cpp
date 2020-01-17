@@ -78,6 +78,9 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
                      ")) AS max FROM unionOfAllTables;"};
 
     pqxx::connection c{con};
+    if (!c.is_open()) {
+      throw "Failed to connect to" + con;
+    }
     pqxx::work transaction{c};
     auto res{transaction.exec(query + select)};
     transaction.commit();
@@ -158,6 +161,9 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     }
 
     pqxx::connection c{con};
+    if (!c.is_open()) {
+      throw "Failed to connect to" + con;
+    }
     pqxx::work transaction{c};
     transaction.exec(query + " FROM " + orig);
     transaction.commit();
@@ -337,7 +343,7 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
       cofactorMatrix.at(i).push_back(res[0][0].as<double>());
       cofactorMatrix.at(j).push_back(res[0][0].as<double>());
 
-      // std::cout << "Filled:" << i << ", " << j << '\n';
+      // std::cout << "Filled:" << i << ", " << j << std::endl;
     }
 
     // intercept
@@ -358,6 +364,8 @@ void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connectio
   assert(res[0].size() == 1);
   cofactorMatrix.at(nrElems).push_back(res[0][0].as<double>());
 }
+
+std::string stringOfVector(const std::vector<double>& array);
 
 std::string stringOfVector(const std::vector<long>& array) {
   std::string out{"[ "};
@@ -388,7 +396,7 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   fillMatrix(relevantColumns, c, cofactorMatrix);
 
   // for (const auto& x : cofactorMatrix) {
-  //   std::cout << stringOfVector(x) << '\n';
+  //   std::cout << stringOfVector(x) << std::endl;
   // }
 
   const size_t n{relevantColumns.size()};
@@ -403,20 +411,23 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   const double lambda{0.003};
 
   // repeat until error is sufficiently small
-  const double eps{1e-6};
+  const double eps{1e-8};
   const double abortAlpha{1e-15};
-  bool notExact{true};
 
-  std::vector<double> epsilon(n, INFINITY);
+  bool notExact{true};
+  double epsilonSum{INFINITY};
+
   int i{0};
   while (notExact) {
     if (++i > 100000000) {
-      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << std::endl;
       break;
       // } else if (i % 1000000 == 0) {
-      //   std::cout << i << '\n';
+      //   std::cout << i << std::endl;
     }
+
     notExact = false;
+    std::vector<double> epsilon(n, 0.);
 
     // compute new epsilon for all features
     for (size_t j = 1; j < n; ++j) {
@@ -429,40 +440,35 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       // using ridge regularization term derived by theta_j
       epsilonNew += lambda * 2 * theta.at(j);
 
-      epsilonNew *= alpha;
-
-      // not exact enough
-      if (std::fabs(epsilonNew) > eps) {
-        notExact = true;
-
-        // alpha needs adjusting
-        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e4) {
-          // alpha = std::min(alpha / 3, std::fabs(epsilon.at(j) / epsilonNew));
-          alpha /= 3;
-          epsilonNew /= 3;
-          if (alpha < abortAlpha) {
-            break;
-          }
-        }
-      }
-
-      // epsilonNew *= alpha;
-
       epsilon.at(j) = epsilonNew;
     }
 
+    double newSum{0.};
+    for (const double x : epsilon) {
+      newSum += std::fabs(x);
+    }
+
+    while (newSum * alpha > epsilonSum) {
+      alpha /= 3;
+    }
+
     if (alpha < abortAlpha) {
-      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << std::endl;
       break;
     }
 
-    // #pragma omp parallel for
+    epsilonSum = alpha * newSum;
+
     for (size_t j = 1; j < n; ++j) {
-      theta.at(j) -= epsilon.at(j);
+      theta.at(j) -= epsilon.at(j) * alpha;
+      // not exact enough
+      if (std::fabs(epsilon.at(j) * alpha) > eps) {
+        notExact = true;
+      }
     }
   }
 
-  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << '\n';
+  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << std::endl;
 
   return theta;
 }
@@ -486,13 +492,16 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
   // std::cout << "Feature Scaling complete." << std::endl;
 
   pqxx::connection c{con};
+  if (!c.is_open()) {
+    throw "Failed to connect to" + con;
+  }
   factorizeSQL(varOrder, c);
   // std::cout << "Creation of tables and views complete.\n\n";
 
   std::vector<double> theta{batchGradientDescent(relevantColumns, c)};
   assert(theta.size() == relevantColumns.size());
   // std::cout << "Batch Gradient descent complete.\n";
-  // std::cout << stringOfVector(theta) << '\n';
+  // std::cout << stringOfVector(theta) << std::endl;
 
   // for the constant term
   double sum{0.};
@@ -507,7 +516,7 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
 
   theta.back() = scaleAggs.front().avg - sum;
 
-  // std::cout << stringOfVector(theta) << '\n';
+  // std::cout << stringOfVector(theta) << std::endl;
 
   avg = scaleAggs.front().avg;
 
@@ -531,20 +540,25 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, co
   // repeat until error is sufficiently small
   const double eps{1e-6};
   const double abortAlpha{1e-15};
-  bool notExact{true};
 
-  std::vector<double> epsilon(n, INFINITY);
+  bool notExact{true};
+  double epsilonSum{INFINITY};
   int i{0};
   while (notExact) {
-    // if (i % 100 == 0)
-    //   std::cerr << "Iteration nr. " << i << std::endl;
+    if (i % 10 == 0) {
+      std::cerr << "Iteration nr. " << i << std::endl;
+      std::cerr << stringOfVector(theta) << std::endl;
+      std::cerr << "Alpha: " << alpha << std::endl;
+    }
     if (++i > 100000000) {
-      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << std::endl;
       break;
     }
-    notExact = false;
 
-#pragma omp parallel for
+    notExact = false;
+    std::vector<double> epsilon(n, 0.);
+
+    // #pragma omp parallel for
     // compute new epsilon for all features
     for (size_t j = 1; j < n; ++j) {
       sql epsilonQuery{"SELECT SUM(("};
@@ -558,6 +572,9 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, co
 
       // execute the Query
       pqxx::connection c{con};
+      if (!c.is_open()) {
+        throw "Failed to connect to" + con;
+      }
       pqxx::nontransaction transaction{c};
       auto res{transaction.exec(epsilonQuery)};
       c.disconnect();
@@ -568,42 +585,36 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, co
       // using ridge regularization term derived by theta_j
       epsilonNew += lambda * 2 * theta.at(j);
 
-      // epsilonNew *= alpha;
+      epsilon.at(j) = epsilonNew;
+    }
 
-      // not exact enough
-      if (std::fabs(epsilonNew * alpha) > eps) {
-        notExact = true;
+    double newSum{0.};
+    for (const double x : epsilon) {
+      newSum += std::fabs(x);
+    }
 
-#pragma omp critical
-        {
-          // alpha needs adjusting
-          if (std::fabs(epsilonNew * alpha / 2) >= std::fabs(epsilon.at(j)) ||
-              std::fabs(epsilonNew * alpha) > 1e4) {
-            alpha /= 3;
-            // epsilonNew /= 3;
-            // if (alpha < abortAlpha) {
-            //   break;
-            // }
-          }
-        }
-      }
-
-      epsilon.at(j) = epsilonNew * alpha;
+    while (newSum * alpha > epsilonSum) {
+      alpha /= 3;
     }
 
     if (alpha < abortAlpha) {
-      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << '\n';
+      std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << std::endl;
       break;
     }
 
-    //#pragma omp parallel for
+    epsilonSum = alpha * newSum;
+
     // update theta
     for (size_t j = 1; j < n; ++j) {
-      theta.at(j) -= epsilon.at(j);
+      theta.at(j) -= epsilon.at(j) * alpha;
+      // not exact enough
+      if (std::fabs(epsilon.at(j) * alpha) > eps) {
+        notExact = true;
+      }
     }
   }
 
-  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << '\n';
+  // std::cout << "Finished after i=" << i << " iterations with alpha=" << alpha << std::endl;
 
   return theta;
 }
@@ -618,6 +629,9 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
   // std::cout << "Feature Scaling complete." << std::endl;
 
   pqxx::connection c{con};
+  if (!c.is_open()) {
+    throw "Failed to connect to" + con;
+  }
   pqxx::work transaction{c};
 
   transaction.exec("DROP TABLE IF EXISTS joinView;");
@@ -639,7 +653,7 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
   c.disconnect();
 
   std::vector<double> theta{naiveBGD(relevantColumns, con)};
-  // std::cout << stringOfVector(theta) << '\n';
+  // std::cout << stringOfVector(theta) << std::endl;
 
   // for the constant term
   double sum{0.};
@@ -655,7 +669,7 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
 
   theta.back() = scaleAggs.front().avg - sum;
 
-  // std::cout << stringOfVector(theta) << '\n';
+  // std::cout << stringOfVector(theta) << std::endl;
 
   avg = scaleAggs.front().avg;
 
