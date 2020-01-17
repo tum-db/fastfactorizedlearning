@@ -1,5 +1,6 @@
 #include <pqxx/pqxx>
 #include <vector>
+#include <unordered_map>
 #include <string>
 #include <iostream>
 #include <cassert>
@@ -74,8 +75,8 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
     }
     query += ") ";
 
-    const sql select{"SELECT AVG(" + column + ") as avg, MAX(ABS(" + column +
-                     ")) AS max FROM unionOfAllTables;"};
+    const sql select{"SELECT AVG(COALESCE(" + column + ",0)) as avg, MAX(ABS(COALESCE(" + column +
+                     ",0))) AS max FROM unionOfAllTables;\n"};
 
     pqxx::connection c{con};
     if (!c.is_open()) {
@@ -179,16 +180,21 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
  * code based on "Factorized Databases" by Dan Olteanu, Maximilian Schleich (Figure 5)
  * URL: https://doi.org/10.14778/3007263.3007312
  **/
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction) {
+void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
+  pqxx::work transaction{c};
   const sql& name{varOrder.getName()};
   if (varOrder.isLeaf()) {
-    transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50)," + name +
-                     "_d int);\nINSERT INTO " + name + "_type VALUES ('" + name + "', 0);\n");
+    transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50)," + name + "_d int);\n");
+    transaction.commit();
+
+    pqxx::work transaction2{c};
+    transaction2.exec("INSERT INTO " + name + "_type VALUES ('" + name + "', 0);\n");
+    transaction2.commit();
 
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50)," << name
                << "d int);\nINSERT INTO " << name << "type VALUES ('" << name << "', 0);\n"; */
 
-    sql deg = name + "_d AS " + name + "_deg", lineage = "''AS " + name + "_lineage",
+    sql deg = name + "_d AS " + name + "_deg", lineage = "''::text AS " + name + "_lineage",
         agg = "1 AS " + name + "_agg";
 
     sql schema{""};
@@ -196,22 +202,28 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
       schema += name + "." + x + ", ";
     }
 
-    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + schema + lineage + ", " + deg + ", " + agg +
-                     " FROM " + name + ", " + name + "_type);\n");
+    pqxx::work transaction3{c};
+    transaction3.exec("CREATE VIEW Q" + name + " AS (SELECT " + schema + lineage + ", " + deg + ", " + agg +
+                      " FROM " + name + ", " + name + "_type);\n");
+    transaction3.commit();
 
   } else {
     transaction.exec("CREATE TABLE " + name + "_type(" + name + "_n varchar(50), " + name + "_d int);\n");
+    transaction.commit();
+
     /* createTablesFile << "CREATE TABLE " << name << "type(" << name << "n varchar(50), " << name
                      << "d int);\n"; */
 
+    pqxx::work transaction2{c};
     const int d = 1; // linear
     for (int i{0}; i <= 2 * d; ++i) {
-      transaction.exec("INSERT INTO " + name + "_type VALUES('" + name + "', " + std::to_string(i) + ");\n");
+      transaction2.exec("INSERT INTO " + name + "_type VALUES('" + name + "', " + std::to_string(i) + ");\n");
     }
+    transaction2.commit();
 
     // std::vector<sql> retChild;
     // retChild.reserve(varOrder.getChildren().size());
-    sql join{""}, lineage{"CONCAT("}, deg{""}, agg;
+    sql join{""}, lineage{""}, deg{""}, agg;
 
     // categorical variables have to be treated differently => grouping instead of POWER
     if (varOrder.isCategorical()) {
@@ -223,42 +235,67 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
 
     // ++id;
 
+    std::unordered_map<std::string, std::vector<std::string>> map;
+    for (const sql& x : varOrder.getKey()) {
+      map[x] = std::vector<std::string>{};
+    }
+
     sql lastName{""};
     // construct queries for all children and prepare statements for this node's query
     for (const ExtendedVariableOrder& x : varOrder.getChildren()) {
       // retChild.push_back(factorizeSQL(x, id));
       // join += factorizeSQL(x, id, createTablesFile) + ", ";
       // ret += factorizeSQL(x, createTablesFile);
-      factorizeSQL(x, transaction);
+      factorizeSQL(x, c);
 
       const sql xName{x.getName()};
       if (lastName != "") {
-        join += " NATURAL JOIN ";
+        join += " JOIN Q" + xName + " ON Q" + lastName + "." + name + "=Q" + xName + "." + name;
+      } else {
+        join += "Q" + xName;
       }
-      join += "Q" + xName;
-      // if (lastName != "") {
-      //   join += " ON Q" + lastName + "." + name + "=Q" + xName + "." + name;
-      // }
 
       deg += "Q" + xName + "." + xName + "_deg + ";
-      lineage += "Q" + xName + "." + xName + "_lineage,";
+      lineage += "Q" + xName + "." + xName + "_lineage || ";
       agg += " * Q" + xName + "." + xName + "_agg";
 
       lastName = xName;
+
+      // figure out additional keys for joins
+      for (const std::string& tmpKey : x.getKey()) {
+        if (tmpKey != name) {
+          map[tmpKey].push_back("Q" + xName);
+        }
+      }
     }
+
+    sql key{""};
+    for (const auto& pair : map) {
+      assert(!pair.second.empty());
+      // additional joins
+      if (pair.second.size() > 1) {
+        assert(lastName != "");
+        sql first{""};
+        for (const auto& origin : pair.second) {
+          if (first == "") {
+            first = origin;
+            continue;
+          }
+          join += " AND " + first + "." + pair.first + "=" + origin + "." + pair.first;
+        }
+      }
+      // key
+      key += *pair.second.begin() + "." + pair.first + ", ";
+    }
+
     if (lastName != "") {
       join += ", ";
     }
 
     deg += name + "_d";
-    lineage += "CASE WHEN " + name + "_d > 0 THEN CONCAT('(', " + name + "_n, ',', " + name +
-               "_d, ')') ELSE '' END)";
+    lineage += "CASE WHEN " + name + "_d > 0 THEN '(' || " + name + "_n || ',' || " + name +
+               "_d || ')' ELSE ''::text END";
     agg += ")";
-
-    sql key{""};
-    for (const sql& x : varOrder.getKey()) {
-      key += x + ", ";
-    }
 
     // categorical variables have to be treated differently => grouping instead of POWER
     sql cat{""};
@@ -266,15 +303,17 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction
       cat = "Q" + varOrder.getChildren().front().getName() + "." + name + ", ";
     }
 
-    transaction.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + " " + lineage + " AS " + name +
-                     "_lineage, " + deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " +
-                     join + name + "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " +
-                     cat + key + lineage + ", " + deg + ");\n");
+    pqxx::work transaction3{c};
+    transaction3.exec("CREATE VIEW Q" + name + " AS (SELECT " + key + lineage + " AS " + name + "_lineage, " +
+                      deg + " AS " + name + "_deg, " + agg + " AS " + name + "_agg FROM " + join + name +
+                      "_type WHERE " + deg + " <= " + std::to_string(2 * d) + " GROUP BY " + cat + key +
+                      name + "_lineage, " + deg + ");\n");
+    transaction3.commit();
   }
 }
 
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
-  pqxx::work transaction{c};
+void factorizeSQL(const ExtendedVariableOrder& varOrder, const std::string& con) {
+  pqxx::connection c{con};
   // special case for root/intercept to avoid redundancy and allow simpler varOrders
   const sql& name{varOrder.getName()};
   const int d = 1; // linear
@@ -282,10 +321,10 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
   assert(!varOrder.isLeaf());
 
   // process all children (usually just one)
-  sql join{""}, lineage{"CONCAT("}, deg{""}, agg{"SUM("};
+  sql join{""}, lineage{""}, deg{""}, agg{"SUM("};
   bool first{true};
   for (const ExtendedVariableOrder& x : varOrder.getChildren()) {
-    factorizeSQL(x, transaction);
+    factorizeSQL(x, c);
 
     const sql& xName{x.getName()};
     if (first) {
@@ -298,20 +337,22 @@ void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c) {
     } else {
       join += ", Q" + xName;
       deg += " + Q" + xName + "." + xName + "_deg";
-      lineage += ", ',', Q" + xName + "." + xName + "_lineage";
+      lineage += " || ',', Q" + xName + "." + xName + "_lineage";
       agg += " * Q" + xName + "." + xName + "_agg";
     }
   }
 
-  lineage += ")";
+  lineage += "";
   agg += ")";
 
+  pqxx::work transaction{c};
   // combine the results
   transaction.exec("CREATE TABLE Q" + name + " AS (SELECT " + lineage + " AS lineage, " + deg + " AS deg, " +
                    agg + " AS agg FROM " + join + " WHERE " + deg + " <= " + std::to_string(2 * d) +
-                   " GROUP BY " + lineage + ", " + deg + ");\n");
+                   " GROUP BY lineage, " + deg + ");\n");
 
   transaction.commit();
+  c.disconnect();
 }
 
 void fillMatrix(const std::vector<std::string>& relevantColumns, pqxx::connection& c,
@@ -491,13 +532,13 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
   std::vector<scaleFactors> scaleAggs{scaleFeatures(relevantColumns, leaves, con)};
   // std::cout << "Feature Scaling complete." << std::endl;
 
+  factorizeSQL(varOrder, con);
+  // std::cout << "Creation of tables and views complete.\n\n";
+
   pqxx::connection c{con};
   if (!c.is_open()) {
     throw "Failed to connect to" + con;
   }
-  factorizeSQL(varOrder, c);
-  // std::cout << "Creation of tables and views complete.\n\n";
-
   std::vector<double> theta{batchGradientDescent(relevantColumns, c)};
   assert(theta.size() == relevantColumns.size());
   // std::cout << "Batch Gradient descent complete.\n";

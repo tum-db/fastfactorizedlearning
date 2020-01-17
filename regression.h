@@ -11,7 +11,7 @@
 std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevantColumns,
                                         std::vector<ExtendedVariableOrder*>& leaves, const std::string& con);
 
-void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::connection& c);
+void factorizeSQL(const ExtendedVariableOrder& varOrder, const std::string& con);
 // void factorizeSQL(const ExtendedVariableOrder& varOrder, pqxx::work& transaction);
 // sql factorizeSQL(const ExtendedVariableOrder& varOrder);
 

@@ -707,10 +707,10 @@ int main() {
 
   // computeJoin();
   // testMadlib();
-  // testSales();
+  testSales();
 
   // std::cout << "\n\n";
-  testFavorita();
+  // testFavorita();
 
   // testRandom();
 
