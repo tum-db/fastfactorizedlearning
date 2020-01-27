@@ -452,12 +452,11 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
   const double lambda{0.003};
 
   // repeat until error is sufficiently small
-  const double eps{1e-8};
+  const double eps{1e-6};
   const double abortAlpha{1e-15};
-
   bool notExact{true};
-  double epsilonSum{INFINITY};
 
+  std::vector<double> epsilon(n, INFINITY);
   int i{0};
   while (notExact) {
     if (++i > 100000000) {
@@ -466,9 +465,7 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       // } else if (i % 1000000 == 0) {
       //   std::cout << i << std::endl;
     }
-
     notExact = false;
-    std::vector<double> epsilon(n, 0.);
 
     // compute new epsilon for all features
     for (size_t j = 1; j < n; ++j) {
@@ -481,16 +478,26 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       // using ridge regularization term derived by theta_j
       epsilonNew += lambda * 2 * theta.at(j);
 
+      epsilonNew *= alpha;
+
+      // not exact enough
+      if (std::fabs(epsilonNew) > eps) {
+        notExact = true;
+
+        // alpha needs adjusting
+        if (std::fabs(epsilonNew / 2) >= std::fabs(epsilon.at(j)) || std::fabs(epsilonNew) > 1e4) {
+          // alpha = std::min(alpha / 3, std::fabs(epsilon.at(j) / epsilonNew));
+          alpha /= 3;
+          epsilonNew /= 3;
+          if (alpha < abortAlpha) {
+            break;
+          }
+        }
+      }
+
+      // epsilonNew *= alpha;
+
       epsilon.at(j) = epsilonNew;
-    }
-
-    double newSum{0.};
-    for (const double x : epsilon) {
-      newSum += std::fabs(x);
-    }
-
-    while (newSum * alpha > epsilonSum) {
-      alpha /= 3;
     }
 
     if (alpha < abortAlpha) {
@@ -498,14 +505,8 @@ std::vector<double> batchGradientDescent(const std::vector<std::string>& relevan
       break;
     }
 
-    epsilonSum = alpha * newSum;
-
     for (size_t j = 1; j < n; ++j) {
-      theta.at(j) -= epsilon.at(j) * alpha;
-      // not exact enough
-      if (std::fabs(epsilon.at(j) * alpha) > eps) {
-        notExact = true;
-      }
+      theta.at(j) -= epsilon.at(j);
     }
   }
 
@@ -586,11 +587,11 @@ std::vector<double> naiveBGD(const std::vector<std::string>& relevantColumns, co
   double epsilonSum{INFINITY};
   int i{0};
   while (notExact) {
-    if (i % 10 == 0) {
-      std::cerr << "Iteration nr. " << i << std::endl;
-      std::cerr << stringOfVector(theta) << std::endl;
-      std::cerr << "Alpha: " << alpha << std::endl;
-    }
+    // if (i % 10 == 0) {
+    //   std::cerr << "Iteration nr. " << i << std::endl;
+    //   std::cerr << stringOfVector(theta) << std::endl;
+    //   std::cerr << "Alpha: " << alpha << std::endl;
+    // }
     if (++i > 100000000) {
       std::cout << "Aborted after i=" << i << " iterations with alpha=" << alpha << std::endl;
       break;
@@ -677,7 +678,9 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
 
   transaction.exec("DROP TABLE IF EXISTS joinView;");
 
-  sql join{"CREATE TABLE joinView AS (SELECT* FROM "};
+  sql join{""};
+  sql where{""};
+  std::unordered_map<std::string, std::string> map;
 
   bool first{true};
   for (const auto leaf : leaves) {
@@ -685,11 +688,40 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
       first = false;
       join += leaf->getName();
     } else {
-      join += " NATURAL JOIN " + leaf->getName();
+      join += ", " + leaf->getName();
+    }
+
+    for (const auto& key : leaf->getKey()) {
+      if (map.count(key) == 0) {
+        map[key] = leaf->getName();
+      } else {
+        where += " AND " + map.at(key) + "." + key + "=" + leaf->getName() + "." + key;
+      }
     }
   }
 
-  transaction.exec(join + ")");
+  if (where.size() > 5) {
+    where = " WHERE" + where.substr(4, where.size()) + ")";
+  } else {
+    where = ")";
+  }
+
+  sql select{"CREATE TABLE joinView AS (SELECT "};
+  if (where.size() > 1) {
+    first = true;
+    for (const auto& pair : map) {
+      if (first) {
+        select += pair.second + "." + pair.first;
+        first = false;
+      } else {
+        select += ", " + pair.second + "." + pair.first;
+      }
+    }
+  } else {
+    select += "*";
+  }
+
+  transaction.exec(select + " FROM " + join + where);
   transaction.commit();
   c.disconnect();
 
