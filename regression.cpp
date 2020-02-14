@@ -38,15 +38,12 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
 
     const std::vector<std::string>& keys{leaves.at(i)->getKey()};
     for (const auto& col : keys) {
-      for (size_t j{0}; j < n; ++j) {
+      for (size_t j{1}; j < n; ++j) {
         // column j appears in table i
         if (col == relevantColumns.at(j)) {
           relevantTables.at(j).push_back(i);
 
-          // table needs changing
-          if (j > 0) {
-            convertCols.at(i).push_back(j);
-          }
+          convertCols.at(i).push_back(j);
 
           // other columns can't match
           break;
@@ -60,7 +57,7 @@ std::vector<scaleFactors> scaleFeatures(const std::vector<std::string>& relevant
 
 #pragma omp parallel for
   // compute the required aggregates
-  for (size_t i = 0; i < n; ++i) {
+  for (size_t i = 1; i < n; ++i) {
     const sql& column{relevantColumns.at(i)};
 
     sql query{""};
@@ -556,11 +553,10 @@ std::vector<double> linearRegression(ExtendedVariableOrder& varOrder,
     sum += theta.at(i) * scaleAggs.at(i).avg;
   }
 
-  theta.back() = scaleAggs.front().avg - sum;
+  avg = theta.back();
 
+  theta.back() -= sum;
   // std::cout << stringOfVector(theta) << std::endl;
-
-  avg = scaleAggs.front().avg;
 
   // std::cout.flags(oldSettings);
 
@@ -740,11 +736,11 @@ std::vector<double> naiveRegression(ExtendedVariableOrder& varOrder,
     sum += theta.at(i) * scaleAggs.at(i).avg;
   }
 
-  theta.back() = scaleAggs.front().avg - sum;
+  avg = theta.back();
+
+  theta.back() -= sum;
 
   // std::cout << stringOfVector(theta) << std::endl;
-
-  avg = scaleAggs.front().avg;
 
   return theta;
 }
